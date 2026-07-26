@@ -1,0 +1,31 @@
+[github]
+min_stars = 100
+active_days = 30
+max_repositories = 10
+max_issues_per_repository = 10
+languages = []
+repository_blacklist = []
+organization_blacklist = []
+allow_assigned = false
+
+[limits]
+max_agent_steps = 12
+max_modified_files = 5
+max_diff_lines = 300
+command_timeout_seconds = 120
+test_retries = 2
+daily_model_calls = 30
+provider_cooldown_seconds = 60
+
+[runtime]
+dry_run = true
+allow_submit = false
+daemon_interval_seconds = 86400
+database_path = "good-samaritan.db"
+work_directory = "good-samaritan-work"
+
+[models]
+priority = ["groq", "gemini", "openrouter"]
+groq_model = ""
+gemini_model = ""
+openrouter_model = ""
