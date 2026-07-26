@@ -76,7 +76,11 @@ def run(config:Path|None=typer.Option(None),submit:bool=typer.Option(False),json
             db.status(attempt,Status.READY,patch_path=str(patch))
             if not submit:log("Dry run complete.",json_output,patch=str(patch),pr_draft=str(draft));return
             fork=gh.fork(c.issue.repository); branch=f"good-samaritan/issue-{c.issue.number}"; import subprocess
-            subprocess.run(["git","checkout","-b",branch],cwd=root,check=True); subprocess.run(["git","config","user.name",s.git_name],cwd=root,check=True);subprocess.run(["git","config","user.email",s.git_email],cwd=root,check=True);subprocess.run(["git","add","-A"],cwd=root,check=True);subprocess.run(["git","commit","-m",f"Fix #{c.issue.number}: {c.issue.title[:50]}"],cwd=root,check=True);subprocess.run(["git","remote","add","fork",fork["clone_url"]],cwd=root,check=True);subprocess.run(["git","push","fork",branch],cwd=root,check=True)
+            subprocess.run(["git","checkout","-b",branch],cwd=root,check=True); subprocess.run(["git","config","user.name",s.git_name],cwd=root,check=True);subprocess.run(["git","config","user.email",s.git_email],cwd=root,check=True);subprocess.run(["git","add","-A"],cwd=root,check=True);subprocess.run(["git","commit","-m",f"Fix #{c.issue.number}: {c.issue.title[:50]}"],cwd=root,check=True);subprocess.run(["git","remote","add","fork",fork["clone_url"]],cwd=root,check=True)
+            # Push with the independent account's token, never through the
+            # contributor's ambient git credential. The URL is not logged.
+            push_url=fork["clone_url"].replace("https://",f"https://x-access-token:{s.github.token}@",1)
+            subprocess.run(["git","remote","set-url","fork",push_url],cwd=root,check=True);subprocess.run(["git","push","fork",branch],cwd=root,check=True)
             user=gh.user()["login"]; pr=gh.create_pr(c.issue.repository,c.issue.title,body,f"{user}:{branch}",info["default_branch"]);db.status(attempt,Status.PR_CREATED,pr_url=pr["html_url"]);log("Pull request created.",json_output,url=pr["html_url"])
     except Exception as e:
         log("Run failed safely.",json_output,error=str(e));raise typer.Exit(1)

@@ -17,6 +17,9 @@ def issue(**kw):
 def test_config_toml_and_overrides(tmp_path):
     p=tmp_path/'c.toml';p.write_text('[runtime]\ndry_run = false\n[github]\nmin_stars = 42\n')
     s=load_settings(p,**{'github.min_stars':99});assert not s.runtime.dry_run and s.github.min_stars==99
+def test_environment_overrides_toml(monkeypatch,tmp_path):
+    p=tmp_path/'c.toml';p.write_text('[github]\nmin_stars=1\n');monkeypatch.setenv('GOOD_SAMARITAN_MIN_STARS','50')
+    assert load_settings(p).github.min_stars==50
 def test_filter_score_and_injection():
     s=load_settings(); assert local_rejection(issue(),s) is None
     assert local_rejection(issue(body="security vulnerability"),s)

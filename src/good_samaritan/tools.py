@@ -14,6 +14,10 @@ class SafeTools:
     def list_files(self,path:str=".")->list[str]:return [str(p.relative_to(self.root)) for p in self.path(path).rglob("*") if p.is_file()][:500]
     def read_file(self,path:str)->str:return self.path(path).read_text(errors="replace")[:30000]
     def write_file(self,path:str,content:str):self.path(path).write_text(content)
+    def apply_patch(self,path:str,old:str,new:str):
+        target=self.path(path); content=target.read_text()
+        if old not in content:raise ToolSafetyError("patch context was not found")
+        target.write_text(content.replace(old,new,1))
     def search_text(self,query:str,path:str=".")->list[str]:
         return [f"{p.relative_to(self.root)}:{i}:{line[:300]}" for p in self.path(path).rglob("*") if p.is_file() for i,line in enumerate(p.read_text(errors="ignore").splitlines(),1) if query.lower() in line.lower()][:200]
     def diff(self)->str:return self.run("git diff --no-ext-diff").output
