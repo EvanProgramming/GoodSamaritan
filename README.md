@@ -13,8 +13,7 @@ The default is dry-run. A dry run performs discovery, cloning, analysis, editing
 ```bash
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -e '.[test]'
-cp .env.example .env
-cp config.example.toml config.toml
+good-samaritan setup
 ```
 
 Set `GOOD_SAMARITAN_GITHUB_TOKEN` for the dedicated account. A classic token needs `repo` for private-repository access or fork/PR writes; public-only operation can use a fine-grained token with repository contents and pull-requests read/write permissions. Configure at least one provider key and model in the environment/TOML: Gemini (`GEMINI_API_KEY`), Groq (`GROQ_API_KEY`), or OpenRouter (`OPENROUTER_API_KEY`). Model names are intentionally never hard-coded.
@@ -36,6 +35,21 @@ For a real submission, set `runtime.dry_run = false`, `runtime.allow_submit = tr
 Discovery searches active non-fork, non-archived repositories with GitHub Search, evaluates labeled open issues using transparent local scoring, then consults the configured model. The selected repository is shallow-cloned to a temporary directory; bounded tools may inspect/edit only inside it. Relevant tests are detected conservatively, results are persisted to SQLite, and the patch/PR draft is retained in the configured work directory. Attempt states progress from `DISCOVERED` through analysis, editing, testing and reviewing to `READY`/`PR_CREATED`, or a safe failure.
 
 Provider failures, rate limits, and temporary errors cause cooldown and automatic provider fallback. If none are usable, the run stops safely without retries or remote changes. API keys are never put in prompts or log output.
+
+## First-time setup and go-live
+
+`good-samaritan setup` is the recommended one-time local wizard. It creates `config.toml` for non-secret policy/model ordering and a gitignored `.env` with owner-only permissions for the dedicated GitHub token, Git author identity, and one or more provider API keys. For each provider you enable, enter its current model identifier; model names are configurable because providers change their catalogues frequently. The selected order is the automatic fallback order.
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -e '.[test]'
+good-samaritan setup
+good-samaritan doctor --config config.toml
+good-samaritan run --config config.toml       # first full dry run
+```
+
+When the dry run is satisfactory, `good-samaritan go-live --config config.toml --interval-hours 24` performs a final GitHub/model preflight, asks for confirmation of the dedicated GitHub identity, changes only the local live-submission switches, and starts the daemon. Add `--yes` only for an unattended launch. Stop it with Ctrl-C; it completes current cleanup before exiting. Keep the terminal open, or run it under your preferred local process manager after validating the dry run. API keys may alternatively be supplied as process environment variables (useful for launchd); those override `.env` and TOML.
 
 ## Development
 

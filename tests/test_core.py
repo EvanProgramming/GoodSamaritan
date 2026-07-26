@@ -3,6 +3,7 @@ import subprocess
 from pathlib import Path
 import httpx, pytest
 from good_samaritan.config import load_settings
+from good_samaritan.cli import _write_private_env, _write_toml
 from good_samaritan.contribution import AI_DISCLOSURE, pr_body
 from good_samaritan.database import Database
 from good_samaritan.discovery import local_rejection, score, suspicious
@@ -20,6 +21,10 @@ def test_config_toml_and_overrides(tmp_path):
 def test_environment_overrides_toml(monkeypatch,tmp_path):
     p=tmp_path/'c.toml';p.write_text('[github]\nmin_stars=1\n');monkeypatch.setenv('GOOD_SAMARITAN_MIN_STARS','50')
     assert load_settings(p).github.min_stars==50
+def test_setup_writers_keep_secrets_private(tmp_path):
+    env=tmp_path/'.env';config=tmp_path/'config.toml';_write_private_env(env,{'GROQ_API_KEY':'secret'});_write_toml(config,['groq'],{'groq':'example-model'})
+    assert (env.stat().st_mode & 0o777)==0o600 and 'secret' in env.read_text()
+    configured=load_settings(config);assert configured.models.priority==['groq'] and configured.models.groq_model=='example-model'
 def test_filter_score_and_injection():
     s=load_settings(); assert local_rejection(issue(),s) is None
     assert local_rejection(issue(body="security vulnerability"),s)

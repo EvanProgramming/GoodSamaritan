@@ -1,6 +1,7 @@
 from __future__ import annotations
 import os, tomllib
 from pathlib import Path
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 class GitHubConfig(BaseModel):
@@ -10,6 +11,9 @@ class Runtime(BaseModel): dry_run:bool=True; allow_submit:bool=False; daemon_int
 class Models(BaseModel): priority:list[str]=Field(default_factory=lambda:["groq","gemini","openrouter"]); groq_model:str=""; gemini_model:str=""; openrouter_model:str=""
 class Settings(BaseModel): github:GitHubConfig=Field(default_factory=GitHubConfig); limits:Limits=Field(default_factory=Limits); runtime:Runtime=Field(default_factory=Runtime); models:Models=Field(default_factory=Models); git_name:str=Field(default_factory=lambda:os.getenv("GOOD_SAMARITAN_GIT_NAME","Good Samaritan")); git_email:str=Field(default_factory=lambda:os.getenv("GOOD_SAMARITAN_GIT_EMAIL",""))
 def load_settings(path: Path | None = None, **overrides: object) -> Settings:
+    # A local .env is optional and deliberately gitignored. Existing process
+    # environment always wins, which makes launchd/CI configuration possible.
+    load_dotenv(override=False)
     data = tomllib.loads(path.read_text()) if path and path.exists() else {}
     # Environment values intentionally use explicit names so secrets never need
     # to be copied into TOML. They override TOML; explicit caller/CLI values win.
