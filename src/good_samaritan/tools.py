@@ -12,8 +12,14 @@ class SafeTools:
         if any(x in p.name.lower() for x in (".env","id_rsa","credentials")):raise ToolSafetyError("sensitive file access blocked")
         return p
     def list_files(self,path:str=".")->list[str]:return [str(p.relative_to(self.root)) for p in self.path(path).rglob("*") if p.is_file()][:500]
-    def read_file(self,path:str)->str:return self.path(path).read_text(errors="replace")[:30000]
-    def write_file(self,path:str,content:str):self.path(path).write_text(content)
+    def read_file(self,path:str)->str:
+        target=self.path(path)
+        if not target.is_file():raise ToolSafetyError("file does not exist or is not a regular file")
+        return target.read_text(errors="replace")[:30000]
+    def write_file(self,path:str,content:str):
+        target=self.path(path)
+        if target.exists() and not target.is_file():raise ToolSafetyError("target is not a regular file")
+        target.parent.mkdir(parents=True,exist_ok=True);target.write_text(content)
     def apply_patch(self,path:str,old:str,new:str):
         target=self.path(path); content=target.read_text()
         if old not in content:raise ToolSafetyError("patch context was not found")
@@ -25,7 +31,12 @@ class SafeTools:
         lowered=command.lower()
         bad=("sudo","rm -rf","curl |","wget |","chmod 777","/etc/","~", " $", "${", "source ")
         if any(x in lowered for x in bad) or re.search(r"(^|\s)(git\s+push|git\s+commit)(\s|$)",lowered):raise ToolSafetyError("dangerous or remote-writing command blocked")
-        try:r=subprocess.run(command,shell=True,cwd=self.root,text=True,capture_output=True,timeout=self.limits.command_timeout_seconds,env={"PATH":os.environ.get("PATH","")}) ; out=(r.stdout+r.stderr)[:20000]; result=CommandResult(command=command,exit_code=r.returncode,output=out)
+        # Commands run with a disposable HOME inside the cloned repository so
+        # package managers can work without seeing the operator's credentials,
+        # shell profiles, or ordinary cache directories.
+        isolated_home=self.root/'.good-samaritan-home'; isolated_home.mkdir(exist_ok=True)
+        env={"PATH":os.environ.get("PATH",""),"HOME":str(isolated_home),"PIP_CACHE_DIR":str(isolated_home/'pip-cache'),"PIP_DISABLE_PIP_VERSION_CHECK":"1","GIT_TERMINAL_PROMPT":"0","CI":"true"}
+        try:r=subprocess.run(command,shell=True,cwd=self.root,text=True,capture_output=True,timeout=self.limits.command_timeout_seconds,env=env) ; out=(r.stdout+r.stderr)[:20000]; result=CommandResult(command=command,exit_code=r.returncode,output=out)
         except subprocess.TimeoutExpired:result=CommandResult(command=command,exit_code=124,output="command timed out")
         self.commands.append(result);return result
     def changed_files(self)->list[str]:return [x for x in self.run("git diff --name-only").output.splitlines() if x]

@@ -58,4 +58,18 @@ pip install -e '.[test]'
 pytest
 ```
 
-Common failures: `doctor` reports no provider when a key/model pair is missing; GitHub discovery needs a valid token for reliable rate limits; failures to install project dependencies mean no PR is opened by design. This tool does not run arbitrary project install scripts.
+Common failures: `doctor` reports no provider when a key/model pair is missing; GitHub discovery needs a valid token for reliable rate limits; failures to install project dependencies mean no PR is opened by design.
+
+### Disposable dependency environments
+
+Set `runtime.allow_dependency_install = true` to let Good Samaritan prepare a repository's declared test dependencies before validation. It creates `.good-samaritan-venv` **inside that attempt's temporary clone**, installs Python dependencies from `requirements.txt`/`requirements-dev.txt` or the local Python project, and uses `npm ci --ignore-scripts` for lockfile-based Node projects. All installation and test commands are recorded in the dashboard, remain constrained by the command timeout, and disappear when the attempt workspace is cleaned up. It never installs dependencies into your system Python, changes global Git/shell settings, or executes package lifecycle scripts.
+
+## Journal, memory, and public site
+
+Good Samaritan maintains SQLite-backed project, technical, maintainer-preference, and failure memories. Relevant repository memories are injected into the coding prompt before work begins. PR feedback is recorded as feedback and can become lessons for later attempts. Use `good-samaritan stats`, `good-samaritan lessons`, `good-samaritan memory --repository owner/repo`, and `good-samaritan journal` to inspect or generate the public journey. The generated `website/` directory is a deliberately simple GitHub Pages site; its workflow only deploys public journal files and never runs contribution automation.
+
+Social behaviour is disabled by default. When `[social].enabled=true`, a high-confidence selected Issue may receive at most one investigation comment, subject to the daily limit; PR and maintainer interaction remains deduplicated and prompt-injection-like comments are blocked.
+
+## Local cleanup and restoration
+
+Every clone is made in Good Samaritan's configured `work_directory` and is deleted when its attempt exits, whether it succeeds or fails. On daemon startup, interrupted `attempt-*` directories are removed as well. When a created PR is merged or closed, its local patch and PR draft are removed automatically; the SQLite journal and public report remain as intentional application data. Good Samaritan never edits global Git configuration, shell profiles, SSH configuration, or files outside its own workspace. Run `good-samaritan cleanup` to remove stale temporary workspaces, or `good-samaritan cleanup --all-artifacts` to also discard retained local dry-run patches and drafts.

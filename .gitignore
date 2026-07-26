@@ -1,7 +1,9 @@
 .env
+config.toml
 .venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
 good-samaritan.db
 good-samaritan-work/
+good-samaritan-daemon.log

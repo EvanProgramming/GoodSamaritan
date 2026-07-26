@@ -6,10 +6,11 @@ from pydantic import BaseModel, Field
 
 class GitHubConfig(BaseModel):
     token: str = Field(default_factory=lambda: os.getenv("GOOD_SAMARITAN_GITHUB_TOKEN", "")); min_stars:int=100; active_days:int=30; max_repositories:int=10; max_issues_per_repository:int=10; languages:list[str]=Field(default_factory=list); repository_blacklist:list[str]=Field(default_factory=list); organization_blacklist:list[str]=Field(default_factory=list); allow_assigned:bool=False
-class Limits(BaseModel): max_agent_steps:int=12; max_modified_files:int=5; max_diff_lines:int=300; command_timeout_seconds:int=120; test_retries:int=2; daily_model_calls:int=30; provider_cooldown_seconds:int=60
-class Runtime(BaseModel): dry_run:bool=True; allow_submit:bool=False; daemon_interval_seconds:int=86400; database_path:Path=Path("good-samaritan.db"); work_directory:Path=Path("good-samaritan-work")
+class Limits(BaseModel): max_agent_steps:int=40; max_modified_files:int=12; max_diff_lines:int=1000; command_timeout_seconds:int=600; test_retries:int=3; daily_model_calls:int=100; daily_pr_limit:int=5; provider_cooldown_seconds:int=60
+class Runtime(BaseModel): dry_run:bool=True; allow_submit:bool=False; allow_dependency_install:bool=False; daemon_interval_seconds:int=86400; database_path:Path=Path("good-samaritan.db"); work_directory:Path=Path("good-samaritan-work")
+class Social(BaseModel): enabled:bool=False; max_issue_comments_per_day:int=3; allow_large_repositories:bool=False
 class Models(BaseModel): priority:list[str]=Field(default_factory=lambda:["groq","gemini","openrouter"]); groq_model:str=""; gemini_model:str=""; openrouter_model:str=""
-class Settings(BaseModel): github:GitHubConfig=Field(default_factory=GitHubConfig); limits:Limits=Field(default_factory=Limits); runtime:Runtime=Field(default_factory=Runtime); models:Models=Field(default_factory=Models); git_name:str=Field(default_factory=lambda:os.getenv("GOOD_SAMARITAN_GIT_NAME","Good Samaritan")); git_email:str=Field(default_factory=lambda:os.getenv("GOOD_SAMARITAN_GIT_EMAIL",""))
+class Settings(BaseModel): github:GitHubConfig=Field(default_factory=GitHubConfig); limits:Limits=Field(default_factory=Limits); runtime:Runtime=Field(default_factory=Runtime); models:Models=Field(default_factory=Models); social:Social=Field(default_factory=Social); git_name:str=Field(default_factory=lambda:os.getenv("GOOD_SAMARITAN_GIT_NAME","Good Samaritan")); git_email:str=Field(default_factory=lambda:os.getenv("GOOD_SAMARITAN_GIT_EMAIL",""))
 def load_settings(path: Path | None = None, **overrides: object) -> Settings:
     # A local .env is optional and deliberately gitignored. Existing process
     # environment always wins, which makes launchd/CI configuration possible.

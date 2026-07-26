@@ -34,10 +34,18 @@ def test_database_duplicate_and_transitions(tmp_path):
     db=Database(tmp_path/'x.db'); c=score(issue()); i=db.create(c); db.status(i,Status.TESTING);assert db.seen(c.issue.repository,7);assert db.show(i)['status']==Status.TESTING
     with pytest.raises(Exception):db.create(c)
     db.close()
+def test_database_recovers_abandoned_active_attempt(tmp_path):
+    db=Database(tmp_path/'x.db');i=db.create(score(issue()));db.conn.execute("UPDATE attempts SET updated_at='2000-01-01'");db.conn.commit()
+    assert db.recover_abandoned()==1 and db.show(i)['status']==Status.FAILED
+    db.close()
+def test_database_counts_daily_prs(tmp_path):
+    db=Database(tmp_path/'x.db');i=db.create(score(issue()));db.status(i,Status.PR_CREATED,pr_url='https://github.com/a/b/pull/1')
+    assert db.daily_prs()==1;db.close()
 def test_safe_tools_blocks_escape_and_commands(tmp_path):
     subprocess.run(['git','init'],cwd=tmp_path,check=True,capture_output=True); (tmp_path/'a.txt').write_text('hello')
     t=SafeTools(tmp_path,load_settings().limits)
     with pytest.raises(ToolSafetyError):t.read_file('../secret')
+    with pytest.raises(ToolSafetyError):t.read_file('missing-file')
     with pytest.raises(ToolSafetyError):t.run('sudo whoami')
     assert t.run('git status').exit_code==0
 def test_diff_limit(tmp_path):
@@ -57,7 +65,7 @@ def test_github_errors():
 def test_router_fallback_and_structured(monkeypatch):
     s=load_settings();s.models.priority=['groq','gemini'];s.models.groq_model='bad';s.models.gemini_model='good';monkeypatch.setenv('GROQ_API_KEY','x');monkeypatch.setenv('GEMINI_API_KEY','x')
     router=ModelRouter(s)
-    def call(p,prompt):
+    def call(p,prompt,json_mode=False):
         if p=='groq':raise httpx.HTTPStatusError('rate',request=httpx.Request('GET','x'),response=httpx.Response(429))
         from good_samaritan.models import ModelReply
         return ModelReply(provider=p,model='good',content='{"clear":true,"small_scope":true,"expected_behavior":true,"safe":true,"confidence":0.8}')
@@ -66,3 +74,27 @@ def test_router_fallback_and_structured(monkeypatch):
 def test_router_no_key():
     s=load_settings();s.models.priority=['groq'];s.models.groq_model='x'
     with pytest.raises(ModelUnavailable):ModelRouter(s).complete('x')
+def test_router_error_redacts_key(monkeypatch):
+    s=load_settings();s.models.priority=['gemini'];s.models.gemini_model='x';monkeypatch.setenv('GEMINI_API_KEY','a-secret-key')
+    router=ModelRouter(s)
+    def fail(*_):
+        raise httpx.HTTPStatusError('request https://example.test/?key=a-secret-key',request=httpx.Request('GET','https://example.test/?key=a-secret-key'),response=httpx.Response(404))
+    router._call=fail
+    with pytest.raises(ModelUnavailable) as error:router.complete('x')
+    assert 'a-secret-key' not in str(error.value) and '[REDACTED]' in str(error.value)
+def test_structured_retries_invalid_json(monkeypatch):
+    s=load_settings();s.models.priority=['gemini'];s.models.gemini_model='x';monkeypatch.setenv('GEMINI_API_KEY','x')
+    from good_samaritan.models import ModelReply
+    router=ModelRouter(s); replies=iter(['{}','{"clear":true,"small_scope":true,"expected_behavior":true,"safe":true,"confidence":0.5}'])
+    router.complete=lambda prompt,**kwargs:ModelReply(provider='gemini',model='x',content=next(replies))
+    value,_=router.structured('assess',Assessment);assert value.safe
+
+def test_gemini_key_is_sent_as_header(monkeypatch):
+    s=load_settings();s.models.gemini_model='gemini-test';monkeypatch.setenv('GEMINI_API_KEY','not-in-url')
+    observed={}
+    def handler(request):
+        observed['url']=str(request.url);observed['key']=request.headers.get('x-goog-api-key')
+        return httpx.Response(200,json={'candidates':[{'content':{'parts':[{'text':'OK'}]}}]})
+    from good_samaritan.models import ModelReply
+    reply=ModelRouter(s,httpx.Client(transport=httpx.MockTransport(handler)))._call('gemini','hello')
+    assert reply.content=='OK' and observed['key']=='not-in-url' and 'not-in-url' not in observed['url']

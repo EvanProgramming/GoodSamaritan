@@ -9,20 +9,30 @@ organization_blacklist = []
 allow_assigned = false
 
 [limits]
-max_agent_steps = 12
-max_modified_files = 5
-max_diff_lines = 300
-command_timeout_seconds = 120
-test_retries = 2
-daily_model_calls = 30
+max_agent_steps = 40
+max_modified_files = 12
+max_diff_lines = 1000
+command_timeout_seconds = 600
+test_retries = 3
+daily_model_calls = 100
+daily_pr_limit = 5
 provider_cooldown_seconds = 60
 
 [runtime]
 dry_run = true
 allow_submit = false
+# Installs project-declared dependencies only into each disposable clone.
+allow_dependency_install = false
 daemon_interval_seconds = 86400
 database_path = "good-samaritan.db"
 work_directory = "good-samaritan-work"
+
+[social]
+# Set true only after confirming the independent account’s public behavior.
+enabled = false
+# 0 means no daily cap; each Issue is still commented on at most once.
+max_issue_comments_per_day = 0
+allow_large_repositories = false
 
 [models]
 priority = ["groq", "gemini", "openrouter"]
