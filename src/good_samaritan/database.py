@@ -36,6 +36,10 @@ class Database:
     def recover_abandoned(self, minutes:int=15)->int:
         active=("SELECTED","CLONING","ANALYZING","EDITING","TESTING","REVIEWING")
         placeholders=','.join('?' for _ in active)
-        cur=self.conn.execute(f"UPDATE attempts SET status=?,error=?,updated_at=CURRENT_TIMESTAMP WHERE status IN ({placeholders}) AND updated_at < datetime('now', ?)",("FAILED","Run interrupted before completion; safe recovery on daemon start.",*active,f"-{minutes} minutes"));self.conn.commit();return cur.rowcount
+        query=f"UPDATE attempts SET status=?,error=?,updated_at=CURRENT_TIMESTAMP WHERE status IN ({placeholders})"
+        values=("FAILED","Run interrupted before completion; safe recovery on daemon start.",*active)
+        if minutes>0:
+            query+=" AND updated_at < datetime('now', ?)";values=(*values,f"-{minutes} minutes")
+        cur=self.conn.execute(query,values);self.conn.commit();return cur.rowcount
     def show(self,id:int): return self.conn.execute("SELECT * FROM attempts WHERE id=?",(id,)).fetchone()
     def close(self): self.conn.close()

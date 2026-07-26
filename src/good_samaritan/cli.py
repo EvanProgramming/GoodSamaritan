@@ -128,7 +128,7 @@ def run(config:Path|None=typer.Option(None),submit:bool=typer.Option(False),repo
         c=max(candidates,key=lambda x:x.score)
         log(f"Selected {c.issue.repository}#{c.issue.number}; requesting model assessment.",json_output,issue=c.issue.number,repository=c.issue.repository)
         try: assessment,reply=_assessment(router,c); c=score(c.issue,assessment); 
-        except ModelUnavailable as e:log("No model is available; preserving state without a clone.",json_output,error=str(e));return
+        except ModelUnavailable as e:log("No model is available; preserving state without a clone.",json_output,error=str(e));return "MODEL_UNAVAILABLE"
         if not (assessment.clear and assessment.small_scope and assessment.expected_behavior and assessment.safe):log("This issue is beyond current limits, so I am moving on.",json_output,reason=assessment.reasoning);return
         attempt=db.create(c); db.status(attempt,Status.CLONING,provider=reply.provider,model=reply.model);db.event(attempt,"CLONING","Preparing shallow repository clone.");log("Cloning the selected repository.",json_output,attempt_id=attempt)
         if submit and s.social.enabled and (s.social.max_issue_comments_per_day==0 or db.daily_interactions("issue_investigation")<s.social.max_issue_comments_per_day):
@@ -173,6 +173,9 @@ def run(config:Path|None=typer.Option(None),submit:bool=typer.Option(False),repo
             user=gh.user()["login"]; pr=gh.create_pr(c.issue.repository,c.issue.title,body,f"{user}:{branch}",info["default_branch"]);db.status(attempt,Status.PR_CREATED,pr_url=pr["html_url"]);db.contribution(attempt,c.issue.repository,c.issue.number,"Submitted a focused tested fix.","Waiting for maintainer review",pr["html_url"])
             notice=gh.comment(c.issue.repository,c.issue.number,f"A focused fix is available in {pr['html_url']}. This contribution was autonomously prepared by Good Samaritan with AI assistance; maintainer review is requested.")
             db.interaction(attempt,notice["id"],"issue_announcement",user,"",status="REPLIED");log("Pull request created.",json_output,url=pr["html_url"])
+    except ModelUnavailable as e:
+        if attempt is not None:db.status(attempt,Status.FAILED,error=str(e));db.event(attempt,"FAILED",str(e))
+        log("Model providers are temporarily unavailable; daemon will retry sooner.",json_output,error=str(e));return "MODEL_UNAVAILABLE"
     except Exception as e:
         if attempt is not None:db.status(attempt,Status.FAILED,error=str(e));db.event(attempt,"FAILED",str(e))
         log("Run failed safely.",json_output,error=str(e));raise typer.Exit(1)
@@ -195,7 +198,10 @@ def daemon(config:Path|None=typer.Option(None)):
     signal.signal(signal.SIGINT,stop);signal.signal(signal.SIGTERM,stop);s=settings(config)
     recovery=Database(s.runtime.database_path)
     try:
-        recovered=recovery.recover_abandoned()
+        # A new daemon instance means any active record belongs to the process
+        # that just exited; resolve it immediately instead of leaving the UI in
+        # a false EDITING/TESTING state during the old grace period.
+        recovered=recovery.recover_abandoned(minutes=0)
         if recovered:log(f"Recovered {recovered} interrupted run(s) from a previous process.")
         removed=cleanup_orphan_workspaces(s.runtime.work_directory)
         if removed:log(f"Removed {len(removed)} stale temporary workspace(s).")
@@ -211,12 +217,17 @@ def daemon(config:Path|None=typer.Option(None)):
         # `run` is also a Typer command, so pass every command parameter when
         # invoking it internally rather than letting Typer's OptionInfo defaults
         # leak into ordinary Python execution.
-        try:run(config=config,submit=s.runtime.allow_submit and not s.runtime.dry_run,repository=None,json_output=False)
+        delay=s.runtime.daemon_interval_seconds
+        try:
+            outcome=run(config=config,submit=s.runtime.allow_submit and not s.runtime.dry_run,repository=None,json_output=False)
+            if outcome=="MODEL_UNAVAILABLE":
+                delay=s.runtime.model_retry_interval_seconds
+                log(f"All model providers are rate-limited or unavailable; retrying in {delay} seconds.")
         except typer.Exit as e:log(f"Contribution cycle ended safely with exit code {e.exit_code}; daemon will retry next interval.")
         db=Database(s.runtime.database_path)
         try: generate_journal(db,Path("website"))
         finally: db.close()
-        for _ in range(s.runtime.daemon_interval_seconds):
+        for _ in range(delay):
             if stopping:break
             time.sleep(1)
     log("Daemon stopped after cleanup.")

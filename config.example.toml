@@ -24,6 +24,8 @@ allow_submit = false
 # Installs project-declared dependencies only into each disposable clone.
 allow_dependency_install = false
 daemon_interval_seconds = 86400
+# Retry provider-wide rate limits sooner than the normal discovery cycle.
+model_retry_interval_seconds = 900
 database_path = "good-samaritan.db"
 work_directory = "good-samaritan-work"
 
