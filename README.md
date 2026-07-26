@@ -16,7 +16,7 @@ pip install -e '.[test]'
 good-samaritan setup
 ```
 
-Set `GOOD_SAMARITAN_GITHUB_TOKEN` for the dedicated account. A classic token needs `repo` for private-repository access or fork/PR writes; public-only operation can use a fine-grained token with repository contents and pull-requests read/write permissions. Configure at least one provider key and model in the environment/TOML: Gemini (`GEMINI_API_KEY`), Groq (`GROQ_API_KEY`), or OpenRouter (`OPENROUTER_API_KEY`). Model names are intentionally never hard-coded.
+Set `GOOD_SAMARITAN_GITHUB_TOKEN` to a **classic** token (`ghp_…`) from the dedicated account, with the `repo` scope. This broader scope is presently necessary because GitHub fine-grained tokens cannot contribute to public repositories where the account is not a member—the central Good Samaritan workflow. Do not use a personal/main-account token. Configure at least one provider key and model in the environment/TOML: Gemini (`GEMINI_API_KEY`), Groq (`GROQ_API_KEY`), or OpenRouter (`OPENROUTER_API_KEY`). Model names are intentionally never hard-coded.
 
 ## Commands
 
@@ -38,7 +38,7 @@ Provider failures, rate limits, and temporary errors cause cooldown and automati
 
 ## First-time setup and go-live
 
-`good-samaritan setup` is the recommended one-time local wizard. It creates `config.toml` for non-secret policy/model ordering and a gitignored `.env` with owner-only permissions for the dedicated GitHub token, Git author identity, and one or more provider API keys. For each provider you enable, enter its current model identifier; model names are configurable because providers change their catalogues frequently. The selected order is the automatic fallback order.
+`good-samaritan setup` is the recommended one-time local wizard. It creates `config.toml` for non-secret policy/model ordering and a gitignored `.env` with owner-only permissions for the dedicated-account **classic GitHub token**, Git author identity, and one or more provider API keys. For each provider you enable, enter its current model identifier; model names are configurable because providers change their catalogues frequently. The selected order is the automatic fallback order.
 
 ```bash
 python3.12 -m venv .venv

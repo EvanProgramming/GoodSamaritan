@@ -42,7 +42,7 @@ def setup(config:Path=typer.Option(Path("config.toml")),env_file:Path=typer.Opti
     if non_interactive:
         raise typer.BadParameter("--non-interactive is intentionally unsupported: supply configuration through environment variables instead.")
     console.print("Good Samaritan setup. Credentials stay in the local .env file (mode 600) and are never logged.")
-    token=typer.prompt("Dedicated Good Samaritan GitHub token",hide_input=True)
+    token=typer.prompt("Dedicated Good Samaritan GitHub classic token (repo scope)",hide_input=True)
     git_name=typer.prompt("Git commit name",default="Good Samaritan")
     git_email=typer.prompt("Git commit email")
     selected=[]; models={}; secrets={"GOOD_SAMARITAN_GITHUB_TOKEN":token,"GOOD_SAMARITAN_GIT_NAME":git_name,"GOOD_SAMARITAN_GIT_EMAIL":git_email}
@@ -77,11 +77,13 @@ def go_live(config:Path=typer.Option(Path("config.toml")),interval_hours:int=typ
     daemon(config=config)
 @app.command()
 def doctor(config:Path|None=typer.Option(None),json_output:bool=typer.Option(False,"--json")):
-    s=settings(config); checks={"python":True,"git":__import__('shutil').which("git") is not None,"sqlite":True,"temporary_directory":True,"github_token":bool(s.github.token),"model_providers":ModelRouter(s).available()}
+    s=settings(config); token_kind="classic" if s.github.token.startswith("ghp_") else "fine-grained" if s.github.token.startswith("github_pat_") else "unknown"
+    checks={"python":True,"git":__import__('shutil').which("git") is not None,"sqlite":True,"temporary_directory":True,"github_token":bool(s.github.token),"github_token_kind":token_kind,"model_providers":ModelRouter(s).available()}
     if s.github.token:
         try:checks["github_user"]=GitHub(s).user().get("login")
         except GitHubError as e:checks["github_user_error"]=str(e)
     db=Database(s.runtime.database_path);db.close();log("Configuration checked.",json_output,**checks)
+    if token_kind=="fine-grained":console.print("[yellow]Warning:[/yellow] fine-grained tokens cannot currently contribute to public repositories where this account is not a member. Use a dedicated-account classic token (`repo` scope) for cross-project PR automation.")
 @app.command()
 def discover(config:Path|None=typer.Option(None),json_output:bool=typer.Option(False,"--json")):
     s=settings(config); db=Database(s.runtime.database_path); gh=GitHub(s); found=[]
