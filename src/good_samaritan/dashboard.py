@@ -38,6 +38,10 @@ function render(d){let s=d.summary,c=d.current;document.querySelector('#app').in
 
 PROGRESS_SCRIPT="""<script>async function agentProgress(){try{let d=await (await fetch('/api/status')).json(),e=document.querySelector('#agentprogress');if(!e)return;let rows=(d.events||[]).filter(x=>!d.current||x.attempt_id===d.current.id);e.innerHTML='<h2>Current agent activity</h2>'+(rows.length?'<table><tr><th>Time</th><th>Stage</th><th>Detail</th></tr>'+rows.map(x=>`<tr><td>${x.created_at}</td><td>${x.stage}</td><td>${x.detail}</td></tr>`).join('')+'</table>':'<div class=empty>No agent actions yet.</div>')}catch(_){}}agentProgress();setInterval(agentProgress,3000)</script>"""
 
+def targeted_command(config:Path,repository:str)->list[str]:
+    """A dashboard target is an explicitly authorized live contribution run."""
+    return [sys.executable,"-m","good_samaritan.cli","run","--config",str(config),"--repository",repository,"--submit","--json"]
+
 def _service(action:str) -> tuple[bool,str]:
     label="com.evanprogramming.good-samaritan"; domain=f"gui/{os.getuid()}"; plist=Path.home()/"Library/LaunchAgents"/f"{label}.plist"
     loaded=subprocess.run(["launchctl","print",domain+"/"+label],text=True,capture_output=True).returncode==0
@@ -65,7 +69,7 @@ def serve(database: Path, config: Path, host: str="127.0.0.1", port: int=8765) -
                 repo=fields.get("repository","").replace("%2F","/").replace("%2f","/")
                 if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+",repo):self.send_error(400,"Use owner/repository");return
                 with (config.parent/"targeted-run.log").open("a") as log:
-                    subprocess.Popen([sys.executable,"-m","good_samaritan.cli","run","--config",str(config),"--repository",repo,"--json"],cwd=config.parent,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
+                    subprocess.Popen(targeted_command(config,repo),cwd=config.parent,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
                 body=json.dumps({"ok":True,"message":f"Started a targeted contribution attempt for {repo}. Progress and errors are in targeted-run.log."}).encode()
             else:self.send_error(404);return
             self.send_response(200);self.send_header("Content-Type","application/json");self.end_headers();self.wfile.write(body)
