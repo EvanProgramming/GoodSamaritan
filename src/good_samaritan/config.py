@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 class GitHubConfig(BaseModel):
     token: str = Field(default_factory=lambda: os.getenv("GOOD_SAMARITAN_GITHUB_TOKEN", "")); min_stars:int=100; active_days:int=30; max_repositories:int=10; max_issues_per_repository:int=10; languages:list[str]=Field(default_factory=list); repository_blacklist:list[str]=Field(default_factory=list); organization_blacklist:list[str]=Field(default_factory=list); allow_assigned:bool=False
-class Limits(BaseModel): max_agent_steps:int=40; max_modified_files:int=12; max_diff_lines:int=1000; command_timeout_seconds:int=600; test_retries:int=3; daily_model_calls:int=100; daily_pr_limit:int=5; provider_cooldown_seconds:int=60
+class Limits(BaseModel): max_agent_steps:int=40; max_modified_files:int=12; max_diff_lines:int=1000; command_timeout_seconds:int=600; test_retries:int=3; daily_model_calls:int=100; daily_pr_limit:int=5; provider_cooldown_seconds:int=60; provider_min_interval_seconds:int=65
 class Runtime(BaseModel): dry_run:bool=True; allow_submit:bool=False; allow_dependency_install:bool=False; daemon_interval_seconds:int=86400; model_retry_interval_seconds:int=900; database_path:Path=Path("good-samaritan.db"); work_directory:Path=Path("good-samaritan-work")
 class Social(BaseModel): enabled:bool=False; max_issue_comments_per_day:int=3; allow_large_repositories:bool=False
 class Models(BaseModel): priority:list[str]=Field(default_factory=lambda:["groq","gemini","openrouter"]); groq_model:str=""; gemini_model:str=""; openrouter_model:str=""
@@ -22,7 +22,7 @@ def load_settings(path: Path | None = None, **overrides: object) -> Settings:
         "GOOD_SAMARITAN_GITHUB_TOKEN":("github","token",str), "GOOD_SAMARITAN_MIN_STARS":("github","min_stars",int), "GOOD_SAMARITAN_ACTIVE_DAYS":("github","active_days",int),
         "GOOD_SAMARITAN_MAX_REPOSITORIES":("github","max_repositories",int), "GOOD_SAMARITAN_MAX_ISSUES_PER_REPOSITORY":("github","max_issues_per_repository",int),
         "GOOD_SAMARITAN_MAX_AGENT_STEPS":("limits","max_agent_steps",int), "GOOD_SAMARITAN_MAX_MODIFIED_FILES":("limits","max_modified_files",int), "GOOD_SAMARITAN_MAX_DIFF_LINES":("limits","max_diff_lines",int),
-        "GOOD_SAMARITAN_COMMAND_TIMEOUT_SECONDS":("limits","command_timeout_seconds",int), "GOOD_SAMARITAN_DRY_RUN":("runtime","dry_run",lambda v:v.lower() in ("1","true","yes","on")),
+        "GOOD_SAMARITAN_COMMAND_TIMEOUT_SECONDS":("limits","command_timeout_seconds",int), "GOOD_SAMARITAN_PROVIDER_MIN_INTERVAL_SECONDS":("limits","provider_min_interval_seconds",int), "GOOD_SAMARITAN_DRY_RUN":("runtime","dry_run",lambda v:v.lower() in ("1","true","yes","on")),
         "GOOD_SAMARITAN_ALLOW_SUBMIT":("runtime","allow_submit",lambda v:v.lower() in ("1","true","yes","on")), "GOOD_SAMARITAN_DATABASE_PATH":("runtime","database_path",Path),
         "GOOD_SAMARITAN_WORK_DIRECTORY":("runtime","work_directory",Path), "GOOD_SAMARITAN_DAEMON_INTERVAL_SECONDS":("runtime","daemon_interval_seconds",int), "GOOD_SAMARITAN_MODEL_RETRY_INTERVAL_SECONDS":("runtime","model_retry_interval_seconds",int),
         "GOOD_SAMARITAN_GIT_NAME":(None,"git_name",str), "GOOD_SAMARITAN_GIT_EMAIL":(None,"git_email",str),

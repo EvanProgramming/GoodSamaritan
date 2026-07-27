@@ -1,9 +1,10 @@
 from __future__ import annotations
+from typing import Literal
 from pydantic import BaseModel
 from .contributing import guidance
 from .router import ModelRouter
 from .tools import SafeTools, ToolSafetyError
-class Action(BaseModel): tool:str; path:str|None=None; content:str|None=None; command:str|None=None; query:str|None=None; old:str|None=None; new:str|None=None
+class Action(BaseModel): tool:Literal["list_files","read_file","search_text","write_file","apply_patch","run_command","read_git_diff","finish"]; path:str|None=None; content:str|None=None; command:str|None=None; query:str|None=None; old:str|None=None; new:str|None=None
 class CodingAgent:
     def __init__(self,router:ModelRouter,tools:SafeTools):self.router=router;self.tools=tools
     def run(self,issue_text:str,memory_context:str="",progress=None,contribution_guidance:str|None=None)->str:

@@ -1,20 +1,42 @@
 from __future__ import annotations
-import json, os, time
+import fcntl, json, os, time
+from collections.abc import Callable
+from math import ceil
+from pathlib import Path
 import httpx
 from pydantic import BaseModel
 from .config import Settings
 from .models import ModelReply
 class ModelUnavailable(RuntimeError): pass
 class ModelRouter:
-    def __init__(self,settings:Settings,client:httpx.Client|None=None): self.settings=settings; self.client=client or httpx.Client(timeout=45); self.cooldowns:dict[str,float]={}; self.calls=0
+    def __init__(self,settings:Settings,client:httpx.Client|None=None,on_wait:Callable[[str,int],None]|None=None): self.settings=settings; self.client=client or httpx.Client(timeout=45); self.cooldowns:dict[str,float]={}; self.calls=0;self.on_wait=on_wait;self.rate_state=Path(settings.runtime.database_path).parent/'model-rate-limit.json'
     def _key(self,p:str)->str:return os.getenv(f"{p.upper()}_API_KEY", "")
     def available(self):return [p for p in self.settings.models.priority if self._key(p) and getattr(self.settings.models,f"{p}_model","")]
+    def _pace(self,p:str):
+        """Reserve a provider call across daemon and targeted-run processes."""
+        interval=self.settings.limits.provider_min_interval_seconds
+        if interval<=0:return
+        self.rate_state.parent.mkdir(parents=True,exist_ok=True)
+        with self.rate_state.open("a+") as state:
+            fcntl.flock(state.fileno(),fcntl.LOCK_EX)
+            try:
+                state.seek(0)
+                try:history=json.load(state)
+                except (json.JSONDecodeError,ValueError):history={}
+                remaining=float(history.get(p,0))+interval-time.time()
+                if remaining>0:
+                    if self.on_wait:self.on_wait(p,ceil(remaining))
+                    time.sleep(remaining)
+                history[p]=time.time()
+                state.seek(0);state.truncate();json.dump(history,state);state.flush()
+            finally:fcntl.flock(state.fileno(),fcntl.LOCK_UN)
     def complete(self,prompt:str,role:str="analysis",json_mode:bool=False)->ModelReply:
         if self.calls>=self.settings.limits.daily_model_calls:raise ModelUnavailable("daily model call limit reached")
         errors=[]
         for p in self.settings.models.priority:
             if not self._key(p) or not getattr(self.settings.models,f"{p}_model","") or self.cooldowns.get(p,0)>time.monotonic():continue
             try:
+                self._pace(p)
                 reply=self._call(p,prompt,json_mode); self.calls+=1; return reply
             except (httpx.HTTPError,ValueError) as e:
                 # httpx exceptions include request URLs; Gemini puts its key in

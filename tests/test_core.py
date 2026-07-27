@@ -62,8 +62,9 @@ def test_workspace_cleans(tmp_path):
 def test_github_errors():
     client=httpx.Client(transport=httpx.MockTransport(lambda r:httpx.Response(403,text='denied')),base_url='https://api.github.com')
     with pytest.raises(GitHubError):GitHub(load_settings(),client).user()
-def test_router_fallback_and_structured(monkeypatch):
+def test_router_fallback_and_structured(monkeypatch,tmp_path):
     s=load_settings();s.models.priority=['groq','gemini'];s.models.groq_model='bad';s.models.gemini_model='good';monkeypatch.setenv('GROQ_API_KEY','x');monkeypatch.setenv('GEMINI_API_KEY','x')
+    s.runtime.database_path=tmp_path/'state.db'
     router=ModelRouter(s)
     def call(p,prompt,json_mode=False):
         if p=='groq':raise httpx.HTTPStatusError('rate',request=httpx.Request('GET','x'),response=httpx.Response(429))
@@ -74,8 +75,9 @@ def test_router_fallback_and_structured(monkeypatch):
 def test_router_no_key():
     s=load_settings();s.models.priority=['groq'];s.models.groq_model='x'
     with pytest.raises(ModelUnavailable):ModelRouter(s).complete('x')
-def test_router_error_redacts_key(monkeypatch):
+def test_router_error_redacts_key(monkeypatch,tmp_path):
     s=load_settings();s.models.priority=['gemini'];s.models.gemini_model='x';monkeypatch.setenv('GEMINI_API_KEY','a-secret-key')
+    s.runtime.database_path=tmp_path/'state.db'
     router=ModelRouter(s)
     def fail(*_):
         raise httpx.HTTPStatusError('request https://example.test/?key=a-secret-key',request=httpx.Request('GET','https://example.test/?key=a-secret-key'),response=httpx.Response(404))
@@ -98,3 +100,15 @@ def test_gemini_key_is_sent_as_header(monkeypatch):
     from good_samaritan.models import ModelReply
     reply=ModelRouter(s,httpx.Client(transport=httpx.MockTransport(handler)))._call('gemini','hello')
     assert reply.content=='OK' and observed['key']=='not-in-url' and 'not-in-url' not in observed['url']
+
+def test_router_waits_before_reusing_the_same_provider(monkeypatch,tmp_path):
+    s=load_settings();s.runtime.database_path=tmp_path/'state.db';s.limits.provider_min_interval_seconds=65
+    waited=[];router=ModelRouter(s,on_wait=lambda provider,seconds:waited.append((provider,seconds)))
+    now=[1_000.0]
+    monkeypatch.setattr('good_samaritan.router.time.time',lambda:now[0])
+    monkeypatch.setattr('good_samaritan.router.time.sleep',lambda seconds:waited.append(('sleep',round(seconds))))
+
+    router._pace('groq')
+    router._pace('groq')
+
+    assert waited==[('groq',65),('sleep',65)]

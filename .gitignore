@@ -7,3 +7,4 @@ __pycache__/
 good-samaritan.db
 good-samaritan-work/
 good-samaritan-daemon.log
+model-rate-limit.json

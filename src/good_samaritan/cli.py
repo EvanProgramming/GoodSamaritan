@@ -113,9 +113,11 @@ def _assessment(router:ModelRouter,c:Candidate):
 @app.command()
 def run(config:Path|None=typer.Option(None),submit:bool=typer.Option(False),repository:str|None=typer.Option(None,"--repository","-r",help="Restrict this attempt to owner/repository"),json_output:bool=typer.Option(False,"--json")):
     """Attempt one issue. It is dry-run unless --submit and config allow submission."""
-    s=settings(config); db=Database(s.runtime.database_path); gh=GitHub(s); router=ModelRouter(s)
+    s=settings(config); db=Database(s.runtime.database_path); gh=GitHub(s); attempt=None
+    def model_wait(provider:str,seconds:int):
+        if attempt is not None:db.event(attempt,"WAITING_FOR_MODEL",f"Respecting {provider} rate limit; next model call in about {seconds} seconds.")
+    router=ModelRouter(s,on_wait=model_wait)
     if submit and (s.runtime.dry_run or not s.runtime.allow_submit):raise typer.BadParameter("submission requires runtime.dry_run=false and runtime.allow_submit=true")
-    attempt=None
     try:
         log(f"Starting {'targeted ' if repository else ''}issue discovery.",json_output,repository=repository)
         if submit and db.daily_prs()>=s.limits.daily_pr_limit:
