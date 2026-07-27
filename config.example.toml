@@ -50,3 +50,8 @@ gemini_model = ""
 openrouter_model = ""
 # Never add DeepSeek to priority: it is enabled only for an explicit --repository run.
 deepseek_model = ""
+# Optional local OpenAI-compatible gateway. Install with `npm install -g omniroute`,
+# run `omniroute`, then set priority to include "omniroute" and use the verified free model `oc/deepseek-v4-flash-free`.
+# OMNIROUTE_API_KEY is optional only when this URL remains a loopback address.
+omniroute_model = ""
+omniroute_base_url = "http://localhost:20128/v1"

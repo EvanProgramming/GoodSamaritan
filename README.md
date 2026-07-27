@@ -18,6 +18,24 @@ good-samaritan setup
 
 Set `GOOD_SAMARITAN_GITHUB_TOKEN` to a **classic** token (`ghp_…`) from the dedicated account, with the `repo` scope. This broader scope is presently necessary because GitHub fine-grained tokens cannot contribute to public repositories where the account is not a member—the central Good Samaritan workflow. Do not use a personal/main-account token. Configure at least one provider key and model in the environment/TOML: Gemini (`GEMINI_API_KEY`), Groq (`GROQ_API_KEY`), or OpenRouter (`OPENROUTER_API_KEY`). Model names are intentionally never hard-coded.
 
+### OmniRoute free-model gateway
+
+OmniRoute can be used as a local, OpenAI-compatible provider. `oc/deepseek-v4-flash-free` is the currently verified free backend; you can later try OmniRoute's dynamic `auto/coding:free` route after testing it locally. Install and start the gateway, then add it before the cloud providers in `config.toml`:
+
+```bash
+npm install -g omniroute
+omniroute
+```
+
+```toml
+[models]
+priority = ["omniroute", "groq", "gemini"]
+omniroute_model = "oc/deepseek-v4-flash-free"
+omniroute_base_url = "http://localhost:20128/v1"
+```
+
+OmniRoute's local free route can be used without an API key. If its dashboard supplies an endpoint key, store it as `OMNIROUTE_API_KEY` in `.env`; a non-loopback `OMNIROUTE_BASE_URL` always requires that key.
+
 ## Commands
 
 ```bash

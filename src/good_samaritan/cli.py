@@ -58,11 +58,12 @@ def setup(config:Path=typer.Option(Path("config.toml")),env_file:Path=typer.Opti
     git_name=typer.prompt("Git commit name",default="Good Samaritan")
     git_email=typer.prompt("Git commit email")
     selected=[]; models={}; secrets={"GOOD_SAMARITAN_GITHUB_TOKEN":token,"GOOD_SAMARITAN_GIT_NAME":git_name,"GOOD_SAMARITAN_GIT_EMAIL":git_email}
-    for provider,key in (("groq","GROQ_API_KEY"),("gemini","GEMINI_API_KEY"),("openrouter","OPENROUTER_API_KEY")):
+    for provider,key in (("omniroute","OMNIROUTE_API_KEY"),("groq","GROQ_API_KEY"),("gemini","GEMINI_API_KEY"),("openrouter","OPENROUTER_API_KEY")):
         if typer.confirm(f"Configure {provider}?",default=not selected):
-            value=typer.prompt(f"{provider} API key",hide_input=True)
-            model=typer.prompt(f"{provider} model name")
-            if value and model:selected.append(provider);models[provider]=model;secrets[key]=value
+            label=f"{provider} API key"+(" (optional for local OmniRoute)" if provider=="omniroute" else "")
+            value=typer.prompt(label,hide_input=True)
+            model=typer.prompt(f"{provider} model name",default="oc/deepseek-v4-flash-free" if provider=="omniroute" else "")
+            if model and (value or provider=="omniroute"):selected.append(provider);models[provider]=model;secrets[key]=value
     if not selected:raise typer.BadParameter("at least one provider and model are required")
     _write_private_env(env_file,secrets);_write_toml(config,selected,models)
     console.print(f"Wrote [bold]{config}[/bold] and private [bold]{env_file}[/bold]. Run `good-samaritan doctor --config {config}` next.")

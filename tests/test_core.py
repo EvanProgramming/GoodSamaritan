@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 import subprocess
 from pathlib import Path
 import httpx, pytest
@@ -164,6 +165,24 @@ def test_deepseek_uses_its_openai_compatible_endpoint(monkeypatch,tmp_path):
         return httpx.Response(200,json={'choices':[{'message':{'content':'OK'}}]})
     reply=ModelRouter(s,httpx.Client(transport=httpx.MockTransport(handler)))._call('deepseek','hello')
     assert reply.content=='OK' and observed['url']=='https://api.deepseek.com/chat/completions' and observed['key']=='Bearer not-in-url'
+
+def test_omniroute_uses_local_free_openai_compatible_endpoint(tmp_path):
+    s=load_settings();s.runtime.database_path=tmp_path/'state.db';s.models.priority=['omniroute'];s.models.omniroute_model='oc/deepseek-v4-flash-free'
+    observed={}
+    def handler(request):
+        observed['url']=str(request.url);observed['authorization']=request.headers.get('authorization');observed['model']=json.loads(request.content)['model']
+        return httpx.Response(200,json={'choices':[{'message':{'content':'OK'}}]})
+    reply=ModelRouter(s,httpx.Client(transport=httpx.MockTransport(handler)))._call('omniroute','hello')
+    assert ModelRouter(s).available()==['omniroute'] and reply.content=='OK'
+    assert observed=={'url':'http://localhost:20128/v1/chat/completions','authorization':None,'model':'oc/deepseek-v4-flash-free'}
+
+def test_omniroute_reads_sse_content():
+    response=httpx.Response(200,headers={'content-type':'text/event-stream'},text='data: {"choices":[{"delta":{"content":"hello "}}]}\n\ndata: {"choices":[{"delta":{"content":"world"}}]}\n\ndata: [DONE]\n')
+    assert ModelRouter._omniroute_content(response)=='hello world'
+
+def test_omniroute_requires_a_key_when_not_local(tmp_path):
+    s=load_settings();s.runtime.database_path=tmp_path/'state.db';s.models.priority=['omniroute'];s.models.omniroute_model='oc/deepseek-v4-flash-free';s.models.omniroute_base_url='https://gateway.example/v1'
+    assert ModelRouter(s).available()==[]
 
 def test_router_waits_before_reusing_the_same_provider(monkeypatch,tmp_path):
     s=load_settings();s.runtime.database_path=tmp_path/'state.db';s.limits.provider_min_interval_seconds=65
