@@ -14,6 +14,11 @@ class Settings(BaseModel): github:GitHubConfig=Field(default_factory=GitHubConfi
 def load_settings(path: Path | None = None, **overrides: object) -> Settings:
     # A local .env is optional and deliberately gitignored. Existing process
     # environment always wins, which makes launchd/CI configuration possible.
+    # A service configuration normally lives beside its private .env, rather
+    # than in the caller's working directory (as is the case for launchd and
+    # dashboard-triggered targeted runs).
+    if path is not None:
+        load_dotenv(path.parent / ".env", override=False)
     load_dotenv(override=False)
     data = tomllib.loads(path.read_text()) if path and path.exists() else {}
     # Environment values intentionally use explicit names so secrets never need

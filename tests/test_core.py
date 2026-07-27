@@ -21,6 +21,12 @@ def test_config_toml_and_overrides(tmp_path):
 def test_environment_overrides_toml(monkeypatch,tmp_path):
     p=tmp_path/'c.toml';p.write_text('[github]\nmin_stars=1\n');monkeypatch.setenv('GOOD_SAMARITAN_MIN_STARS','50')
     assert load_settings(p).github.min_stars==50
+def test_config_loads_private_env_beside_config(monkeypatch,tmp_path):
+    monkeypatch.delenv('DEEPSEEK_API_KEY',raising=False)
+    p=tmp_path/'config.toml';p.write_text('[models]\ndeepseek_model="deepseek-chat"\n')
+    (tmp_path/'.env').write_text('DEEPSEEK_API_KEY=test-key\n')
+    assert load_settings(p).models.deepseek_model=='deepseek-chat'
+    assert __import__('os').environ['DEEPSEEK_API_KEY']=='test-key'
 def test_deepseek_is_enabled_only_for_targeted_runs(monkeypatch):
     s=load_settings();s.models.priority=['groq','gemini'];s.models.deepseek_model='deepseek-chat';monkeypatch.setenv('DEEPSEEK_API_KEY','test-key')
     enable_targeted_paid_model(s,None);assert s.models.priority==['groq','gemini']
