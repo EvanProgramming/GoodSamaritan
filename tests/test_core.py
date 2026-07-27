@@ -150,3 +150,12 @@ def test_router_waits_before_reusing_the_same_provider(monkeypatch,tmp_path):
     router._pace('groq')
 
     assert waited==[('groq',65),('sleep',65)]
+
+def test_paid_targeted_deepseek_skips_the_free_provider_rate_limiter(monkeypatch,tmp_path):
+    s=load_settings();s.runtime.database_path=tmp_path/'state.db';s.limits.provider_min_interval_seconds=65
+    waited=[];router=ModelRouter(s,on_wait=lambda provider,seconds:waited.append((provider,seconds)))
+    monkeypatch.setattr('good_samaritan.router.time.sleep',lambda seconds:waited.append(('sleep',seconds)))
+
+    router._pace('deepseek')
+
+    assert waited==[] and not (tmp_path/'model-rate-limit.json').exists()

@@ -14,6 +14,9 @@ class ModelRouter:
     def available(self):return [p for p in self.settings.models.priority if self._key(p) and getattr(self.settings.models,f"{p}_model","")]
     def _pace(self,p:str):
         """Reserve a provider call across daemon and targeted-run processes."""
+        # DeepSeek is intentionally injected only for explicit --repository
+        # runs. Its supplied paid plan has no request-rate restriction.
+        if p=="deepseek":return
         interval=self.settings.limits.provider_min_interval_seconds
         if interval<=0:return
         self.rate_state.parent.mkdir(parents=True,exist_ok=True)
