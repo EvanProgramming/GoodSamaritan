@@ -19,6 +19,8 @@ command_timeout_seconds = 600
 test_retries = 3
 daily_model_calls = 100
 daily_pr_limit = 5
+# Try several ranked issues in a repository before giving up on it.
+max_issue_assessments_per_run = 5
 provider_cooldown_seconds = 60
 # Wait at least this long between calls to the same provider API.
 provider_min_interval_seconds = 65
