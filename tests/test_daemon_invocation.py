@@ -25,5 +25,5 @@ def test_daemon_passes_plain_run_parameters(monkeypatch, tmp_path):
 
     cli.daemon(config=tmp_path / "config.toml")
 
-    assert calls == [{"config": tmp_path / "config.toml", "submit": False, "repository": None, "json_output": False}]
+    assert calls == [{"config": tmp_path / "config.toml", "submit": False, "repository": None, "issue_number": None, "json_output": False}]
     assert delays == [1]

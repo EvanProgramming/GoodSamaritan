@@ -47,6 +47,11 @@ def test_database_duplicate_and_transitions(tmp_path):
     db=Database(tmp_path/'x.db'); c=score(issue()); i=db.create(c); db.status(i,Status.TESTING);assert db.seen(c.issue.repository,7);assert db.show(i)['status']==Status.TESTING
     with pytest.raises(Exception):db.create(c)
     db.close()
+def test_database_explicit_resume_reuses_the_same_attempt(tmp_path):
+    db=Database(tmp_path/'x.db');candidate=score(issue());attempt=db.create(candidate);db.status(attempt,Status.FAILED,error='old failure')
+    assert db.resume(candidate)==attempt
+    resumed=db.show(attempt);assert resumed['status']==Status.SELECTED and resumed['error'] is None
+    db.close()
 def test_database_recovers_abandoned_active_attempt(tmp_path):
     db=Database(tmp_path/'x.db');i=db.create(score(issue()));db.conn.execute("UPDATE attempts SET updated_at='2000-01-01'");db.conn.commit()
     assert db.recover_abandoned()==1 and db.show(i)['status']==Status.FAILED
@@ -91,6 +96,16 @@ def test_github_does_not_retry_permission_error(monkeypatch):
     client=httpx.Client(transport=httpx.MockTransport(handler),base_url='https://api.github.com')
     with pytest.raises(GitHubError):GitHub(load_settings(),client).user()
     assert len(calls)==1
+def test_github_fetches_one_issue_without_enumerating_repository():
+    seen=[]
+    def handler(request):
+        seen.append(request.url.path)
+        if request.url.path.endswith('/issues/7'):return httpx.Response(200,json={'number':7,'title':'One','body':'body','labels':[],'assignee':None})
+        if request.url.path.endswith('/issues/7/comments'):return httpx.Response(200,json=[])
+        return httpx.Response(500)
+    client=httpx.Client(transport=httpx.MockTransport(handler),base_url='https://api.github.com')
+    result=GitHub(load_settings(),client).issue('acme/project',7)
+    assert result.number==7 and '/repos/acme/project/issues' not in seen
 def test_router_fallback_and_structured(monkeypatch,tmp_path):
     s=load_settings();s.models.priority=['groq','gemini'];s.models.groq_model='bad';s.models.gemini_model='good';monkeypatch.setenv('GROQ_API_KEY','x');monkeypatch.setenv('GEMINI_API_KEY','x')
     s.runtime.database_path=tmp_path/'state.db'

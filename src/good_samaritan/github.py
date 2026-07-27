@@ -36,10 +36,15 @@ class GitHub:
         issues=[]
         for item in rows:
             if "pull_request" in item:continue
-            try: comments=[c.get("body") or "" for c in self.issue_comments(repo,item["number"])]
-            except GitHubError: comments=[] # Some repositories disable issue comments.
-            issues.append(Issue(repository=repo,number=item["number"],title=item["title"],body=item.get("body") or "",labels=[z["name"] for z in item["labels"]],comments=comments,assignee=(item.get("assignee")or{}).get("login")))
+            issues.append(self._issue_from_item(repo,item))
         return issues
+    def _issue_from_item(self,repo:str,item:dict)->Issue:
+        try: comments=[c.get("body") or "" for c in self.issue_comments(repo,item["number"])]
+        except GitHubError: comments=[] # Some repositories disable issue comments.
+        return Issue(repository=repo,number=item["number"],title=item["title"],body=item.get("body") or "",labels=[z["name"] for z in item["labels"]],comments=comments,assignee=(item.get("assignee")or{}).get("login"))
+    def issue(self,repo:str,number:int)->Issue:
+        """Read one operator-selected issue without enumerating the repository."""
+        return self._issue_from_item(repo,self._get(f"/repos/{repo}/issues/{number}"))
     def issue_comments(self,repo:str,number:int):return self._get(f"/repos/{repo}/issues/{number}/comments",per_page=100)
     def pr(self,repo:str,number:int):return self._get(f"/repos/{repo}/pulls/{number}")
     def pr_reviews(self,repo:str,number:int):return self._get(f"/repos/{repo}/pulls/{number}/reviews",per_page=100)

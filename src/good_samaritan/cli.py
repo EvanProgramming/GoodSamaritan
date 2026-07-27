@@ -122,12 +122,13 @@ def choose_candidate(router:ModelRouter,candidates:list[Candidate],maximum:int,o
         if on_reject:on_reject(assessed,assessment)
     return None
 @app.command()
-def run(config:Path|None=typer.Option(None),submit:bool=typer.Option(False),repository:str|None=typer.Option(None,"--repository","-r",help="Restrict this attempt to owner/repository"),json_output:bool=typer.Option(False,"--json")):
+def run(config:Path|None=typer.Option(None),submit:bool=typer.Option(False),repository:str|None=typer.Option(None,"--repository","-r",help="Restrict this attempt to owner/repository"),issue_number:int|None=typer.Option(None,"--issue",min=1,help="Explicitly resume or run one issue in the target repository"),json_output:bool=typer.Option(False,"--json")):
     """Attempt one issue. It is dry-run unless --submit and config allow submission."""
     s=settings(config); enable_targeted_paid_model(s,repository); db=Database(s.runtime.database_path); gh=GitHub(s); attempt=None
     def model_wait(provider:str,seconds:int):
         if attempt is not None:db.event(attempt,"WAITING_FOR_MODEL",f"Respecting {provider} rate limit; next model call in about {seconds} seconds.")
     router=ModelRouter(s,on_wait=model_wait)
+    if issue_number is not None and not repository:raise typer.BadParameter("--issue requires --repository")
     if submit and (s.runtime.dry_run or not s.runtime.allow_submit):raise typer.BadParameter("submission requires runtime.dry_run=false and runtime.allow_submit=true")
     try:
         log(f"Starting {'targeted ' if repository else ''}issue discovery.",json_output,repository=repository)
@@ -135,8 +136,10 @@ def run(config:Path|None=typer.Option(None),submit:bool=typer.Option(False),repo
             log("Daily PR limit reached; no new contribution will be started.",json_output,limit=s.limits.daily_pr_limit);return
         candidates=[]
         for repo in ([gh.repo(repository)] if repository else gh.discover()):
-            for issue in gh.issues(repo["full_name"]):
-                if not db.seen(issue.repository,issue.number) and not local_rejection(issue,s):candidates.append(score(issue,repo_stars=repo["stargazers_count"]))
+            issues=[gh.issue(repository,issue_number)] if issue_number is not None else gh.issues(repo["full_name"])
+            for issue in issues:
+                if issue_number is not None and issue.number!=issue_number:continue
+                if (issue_number is not None or not db.seen(issue.repository,issue.number)) and not local_rejection(issue,s):candidates.append(score(issue,repo_stars=repo["stargazers_count"]))
         if not candidates:log("No eligible untried issues found.",json_output);return
         def rejected(candidate,assessment):
             log(f"Skipping {candidate.issue.repository}#{candidate.issue.number}; trying another candidate from this repository.",json_output,issue=candidate.issue.number,repository=candidate.issue.repository,reason=assessment.reasoning)
@@ -146,7 +149,7 @@ def run(config:Path|None=typer.Option(None),submit:bool=typer.Option(False),repo
             log("No suitable issue was found after assessing ranked candidates.",json_output,repository=repository,assessed=min(len(candidates),s.limits.max_issue_assessments_per_run));return
         c,reply=selected
         log(f"Selected {c.issue.repository}#{c.issue.number}; starting contribution.",json_output,issue=c.issue.number,repository=c.issue.repository)
-        attempt=db.create(c); db.status(attempt,Status.CLONING,provider=reply.provider,model=reply.model);db.event(attempt,"CLONING","Preparing shallow repository clone.");log("Cloning the selected repository.",json_output,attempt_id=attempt)
+        attempt=db.resume(c) if issue_number is not None else db.create(c); db.status(attempt,Status.CLONING,provider=reply.provider,model=reply.model);db.event(attempt,"RESUMING" if issue_number is not None else "CLONING","Restarting this explicit issue with a fresh temporary clone." if issue_number is not None else "Preparing shallow repository clone.");log("Cloning the selected repository.",json_output,attempt_id=attempt)
         if submit and s.social.enabled and (s.social.max_issue_comments_per_day==0 or db.daily_interactions("issue_investigation")<s.social.max_issue_comments_per_day):
             seen=" ".join(c.issue.comments).lower()
             if "good samaritan" not in seen and "experimental ai open-source contributor" not in seen:
@@ -235,7 +238,7 @@ def daemon(config:Path|None=typer.Option(None)):
         # leak into ordinary Python execution.
         delay=s.runtime.daemon_interval_seconds
         try:
-            outcome=run(config=config,submit=s.runtime.allow_submit and not s.runtime.dry_run,repository=None,json_output=False)
+            outcome=run(config=config,submit=s.runtime.allow_submit and not s.runtime.dry_run,repository=None,issue_number=None,json_output=False)
             if outcome=="MODEL_UNAVAILABLE":
                 delay=s.runtime.model_retry_interval_seconds
                 log(f"All model providers are rate-limited or unavailable; retrying in {delay} seconds.")

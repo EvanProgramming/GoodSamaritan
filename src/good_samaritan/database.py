@@ -9,6 +9,11 @@ class Database:
     def seen(self, repo:str, number:int)->bool: return self.conn.execute("SELECT 1 FROM attempts WHERE repository=? AND issue_number=?",(repo,number)).fetchone() is not None
     def create(self,c:Candidate)->int:
         cur=self.conn.execute("INSERT INTO attempts(repository,issue_number,status,score,reasons) VALUES(?,?,?,?,?)",(c.issue.repository,c.issue.number,Status.SELECTED,c.score," | ".join(c.reasons))); self.conn.commit(); return cur.lastrowid
+    def resume(self,c:Candidate)->int:
+        """Reuse an unfinished attempt when an operator explicitly resumes it."""
+        row=self.conn.execute("SELECT id FROM attempts WHERE repository=? AND issue_number=?",(c.issue.repository,c.issue.number)).fetchone()
+        if not row:return self.create(c)
+        self.conn.execute("UPDATE attempts SET status=?,score=?,reasons=?,provider=NULL,model=NULL,patch_path=NULL,pr_url=NULL,error=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?",(Status.SELECTED,c.score," | ".join(c.reasons),row['id']));self.conn.commit();return row['id']
     def status(self,id:int,status:Status,**values:str):
         pairs={"status":status,**values}; sets=','.join(f'{k}=?' for k in pairs); self.conn.execute(f"UPDATE attempts SET {sets},updated_at=CURRENT_TIMESTAMP WHERE id=?",(*pairs.values(),id)); self.conn.commit()
     def command(self,id:int,command:str,code:int,output:str): self.conn.execute("INSERT INTO commands(attempt_id,command,exit_code,output) VALUES(?,?,?,?)",(id,command,code,output[:8000])); self.conn.commit()
