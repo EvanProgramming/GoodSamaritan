@@ -66,6 +66,22 @@ def test_workspace_cleans(tmp_path):
 def test_github_errors():
     client=httpx.Client(transport=httpx.MockTransport(lambda r:httpx.Response(403,text='denied')),base_url='https://api.github.com')
     with pytest.raises(GitHubError):GitHub(load_settings(),client).user()
+def test_github_retries_transient_network_error(monkeypatch):
+    calls=[]
+    def handler(request):
+        calls.append(request)
+        if len(calls)==1:raise httpx.ReadError('connection reset',request=request)
+        return httpx.Response(200,json={'login':'bot'})
+    monkeypatch.setattr('good_samaritan.github.time.sleep',lambda _:None)
+    client=httpx.Client(transport=httpx.MockTransport(handler),base_url='https://api.github.com')
+    assert GitHub(load_settings(),client).user()['login']=='bot' and len(calls)==2
+def test_github_does_not_retry_permission_error(monkeypatch):
+    calls=[]
+    def handler(request):calls.append(request);return httpx.Response(403,text='denied')
+    monkeypatch.setattr('good_samaritan.github.time.sleep',lambda _:None)
+    client=httpx.Client(transport=httpx.MockTransport(handler),base_url='https://api.github.com')
+    with pytest.raises(GitHubError):GitHub(load_settings(),client).user()
+    assert len(calls)==1
 def test_router_fallback_and_structured(monkeypatch,tmp_path):
     s=load_settings();s.models.priority=['groq','gemini'];s.models.groq_model='bad';s.models.gemini_model='good';monkeypatch.setenv('GROQ_API_KEY','x');monkeypatch.setenv('GEMINI_API_KEY','x')
     s.runtime.database_path=tmp_path/'state.db'

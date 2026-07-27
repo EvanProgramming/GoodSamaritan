@@ -7,6 +7,9 @@ languages = []
 repository_blacklist = []
 organization_blacklist = []
 allow_assigned = false
+# Retried only for transient GitHub network errors, 429s, and 5xx responses.
+retry_attempts = 4
+retry_base_seconds = 2
 
 [limits]
 max_agent_steps = 40
