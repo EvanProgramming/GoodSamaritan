@@ -6,4 +6,4 @@ class Router:
         return ModelReply(provider='test',model='test',content='This repository has an interesting problem. I will investigate a small verified fix and open a PR only if validation succeeds. Thank you for maintaining it.')
 def test_social_comment_uses_personality_prompt():
     text=investigation_comment(Router(),Issue(repository='owner/repo',number=1,title='Bug',body='details'))
-    assert 'interesting' in text and 'PR' in text
+    assert 'interesting' in text and 'PR' in text and 'Created By @EvanProgramming.' in text
