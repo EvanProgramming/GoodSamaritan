@@ -26,6 +26,10 @@ from .remediation import process_one as process_remediation
 from .contributing import guidance as contribution_guidance, rejects_automated_contributions
 app=typer.Typer(help="A cautious experimental AI open-source contributor.",no_args_is_help=True); console=Console(); stopping=False
 def settings(config:Path|None):return load_settings(config)
+def enable_targeted_paid_model(s,repository:str|None):
+    """DeepSeek is opt-in only for an explicitly targeted repository run."""
+    if repository and os.getenv("DEEPSEEK_API_KEY") and s.models.deepseek_model:
+        s.models.priority=["deepseek",*[p for p in s.models.priority if p!="deepseek"]]
 def log(msg:str,as_json:bool=False,**data): console.print(json.dumps({"message":msg,**data}) if as_json else msg)
 def _write_private_env(path:Path, values:dict[str,str]):
     existing={}
@@ -113,7 +117,7 @@ def _assessment(router:ModelRouter,c:Candidate):
 @app.command()
 def run(config:Path|None=typer.Option(None),submit:bool=typer.Option(False),repository:str|None=typer.Option(None,"--repository","-r",help="Restrict this attempt to owner/repository"),json_output:bool=typer.Option(False,"--json")):
     """Attempt one issue. It is dry-run unless --submit and config allow submission."""
-    s=settings(config); db=Database(s.runtime.database_path); gh=GitHub(s); attempt=None
+    s=settings(config); enable_targeted_paid_model(s,repository); db=Database(s.runtime.database_path); gh=GitHub(s); attempt=None
     def model_wait(provider:str,seconds:int):
         if attempt is not None:db.event(attempt,"WAITING_FOR_MODEL",f"Respecting {provider} rate limit; next model call in about {seconds} seconds.")
     router=ModelRouter(s,on_wait=model_wait)

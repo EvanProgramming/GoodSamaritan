@@ -43,3 +43,5 @@ priority = ["groq", "gemini", "openrouter"]
 groq_model = ""
 gemini_model = ""
 openrouter_model = ""
+# Never add DeepSeek to priority: it is enabled only for an explicit --repository run.
+deepseek_model = ""

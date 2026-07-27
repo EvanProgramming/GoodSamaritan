@@ -3,7 +3,7 @@ import subprocess
 from pathlib import Path
 import httpx, pytest
 from good_samaritan.config import load_settings
-from good_samaritan.cli import _write_private_env, _write_toml
+from good_samaritan.cli import _write_private_env, _write_toml, enable_targeted_paid_model
 from good_samaritan.contribution import AI_DISCLOSURE, pr_body
 from good_samaritan.database import Database
 from good_samaritan.discovery import local_rejection, score, suspicious
@@ -21,6 +21,10 @@ def test_config_toml_and_overrides(tmp_path):
 def test_environment_overrides_toml(monkeypatch,tmp_path):
     p=tmp_path/'c.toml';p.write_text('[github]\nmin_stars=1\n');monkeypatch.setenv('GOOD_SAMARITAN_MIN_STARS','50')
     assert load_settings(p).github.min_stars==50
+def test_deepseek_is_enabled_only_for_targeted_runs(monkeypatch):
+    s=load_settings();s.models.priority=['groq','gemini'];s.models.deepseek_model='deepseek-chat';monkeypatch.setenv('DEEPSEEK_API_KEY','test-key')
+    enable_targeted_paid_model(s,None);assert s.models.priority==['groq','gemini']
+    enable_targeted_paid_model(s,'owner/repository');assert s.models.priority==['deepseek','groq','gemini']
 def test_setup_writers_keep_secrets_private(tmp_path):
     env=tmp_path/'.env';config=tmp_path/'config.toml';_write_private_env(env,{'GROQ_API_KEY':'secret'});_write_toml(config,['groq'],{'groq':'example-model'})
     assert (env.stat().st_mode & 0o777)==0o600 and 'secret' in env.read_text()
@@ -100,6 +104,15 @@ def test_gemini_key_is_sent_as_header(monkeypatch):
     from good_samaritan.models import ModelReply
     reply=ModelRouter(s,httpx.Client(transport=httpx.MockTransport(handler)))._call('gemini','hello')
     assert reply.content=='OK' and observed['key']=='not-in-url' and 'not-in-url' not in observed['url']
+
+def test_deepseek_uses_its_openai_compatible_endpoint(monkeypatch,tmp_path):
+    s=load_settings();s.runtime.database_path=tmp_path/'state.db';s.models.deepseek_model='deepseek-chat';monkeypatch.setenv('DEEPSEEK_API_KEY','not-in-url')
+    observed={}
+    def handler(request):
+        observed['url']=str(request.url);observed['key']=request.headers.get('authorization')
+        return httpx.Response(200,json={'choices':[{'message':{'content':'OK'}}]})
+    reply=ModelRouter(s,httpx.Client(transport=httpx.MockTransport(handler)))._call('deepseek','hello')
+    assert reply.content=='OK' and observed['url']=='https://api.deepseek.com/chat/completions' and observed['key']=='Bearer not-in-url'
 
 def test_router_waits_before_reusing_the_same_provider(monkeypatch,tmp_path):
     s=load_settings();s.runtime.database_path=tmp_path/'state.db';s.limits.provider_min_interval_seconds=65
