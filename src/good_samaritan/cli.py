@@ -158,12 +158,6 @@ def run(config:Path|None=typer.Option(None),submit:bool=typer.Option(False),repo
         c,reply=selected
         log(f"Selected {c.issue.repository}#{c.issue.number}; starting contribution.",json_output,issue=c.issue.number,repository=c.issue.repository)
         attempt=db.resume(c) if issue_number is not None else db.create(c); db.status(attempt,Status.CLONING,provider=reply.provider,model=reply.model);db.event(attempt,"RESUMING" if issue_number is not None else "CLONING","Restarting this explicit issue with a fresh temporary clone." if issue_number is not None else "Preparing shallow repository clone.");log("Cloning the selected repository.",json_output,attempt_id=attempt)
-        if submit and s.social.enabled and (s.social.max_issue_comments_per_day==0 or db.daily_interactions("issue_investigation")<s.social.max_issue_comments_per_day):
-            seen=" ".join(c.issue.comments).lower()
-            if "good samaritan" not in seen and "experimental ai open-source contributor" not in seen:
-                try:note=investigation_comment(router,c.issue)
-                except ModelUnavailable:note="Hi!\n\nI'm Good Samaritan, an experimental AI open-source contributor. This repository and issue look interesting, so I will investigate whether a small, verified fix is possible. I'll open a PR only if I can validate a solution.\n\nThanks for maintaining this project!"
-                posted=gh.comment(c.issue.repository,c.issue.number,note);db.interaction(attempt,posted["id"],"issue_investigation",gh.user()["login"],"",note,"REPLIED")
         info=gh.repo(c.issue.repository)
         with Workspace(s.runtime.work_directory) as ws:
             root=ws.clone(info["clone_url"]); tools=SafeTools(root,s.limits); db.status(attempt,Status.ANALYZING)
@@ -197,6 +191,18 @@ def run(config:Path|None=typer.Option(None),submit:bool=typer.Option(False),repo
             # contributor's ambient git credential. The URL is not logged.
             push_url=fork["clone_url"].replace("https://",f"https://x-access-token:{s.github.token}@",1)
             subprocess.run(["git","remote","set-url","fork",push_url],cwd=root,check=True);subprocess.run(["git","push","fork",branch],cwd=root,check=True)
+            # Wait until a tested branch is ready before introducing ourselves.
+            # The optional social note must never block the actual PR.
+            if s.social.enabled and (s.social.max_issue_comments_per_day==0 or db.daily_interactions("issue_investigation")<s.social.max_issue_comments_per_day):
+                try:
+                    latest_comments=gh.issue_comments(c.issue.repository,c.issue.number)
+                    seen=" ".join((item.get("body") or "") for item in latest_comments).lower()
+                    if "good samaritan" not in seen and "experimental ai open-source contributor" not in seen:
+                        try:note=investigation_comment(router,c.issue)
+                        except ModelUnavailable:note="This repository caught my eye — Created By @EvanProgramming. ✨\n\nI'm Good Samaritan, an experimental AI open-source contributor. I have prepared and validated a small fix, and I’m about to open the PR for maintainer review. Thanks for maintaining this project!"
+                        posted=gh.comment(c.issue.repository,c.issue.number,note);db.interaction(attempt,posted["id"],"issue_investigation",gh.user()["login"],"",note,"REPLIED")
+                except Exception as error:
+                    db.event(attempt,"COMMENT_SKIPPED",f"Opening comment could not be posted; continuing to create the PR: {error}")
             user=gh.user()["login"]; pr=gh.create_pr(c.issue.repository,c.issue.title,body,f"{user}:{branch}",info["default_branch"]);db.status(attempt,Status.PR_CREATED,pr_url=pr["html_url"]);db.contribution(attempt,c.issue.repository,c.issue.number,"Submitted a focused tested fix.","Waiting for maintainer review",pr["html_url"])
             notice=gh.comment(c.issue.repository,c.issue.number,f"A focused fix is available in {pr['html_url']}. This contribution was autonomously prepared by Good Samaritan with AI assistance; maintainer review is requested.")
             db.interaction(attempt,notice["id"],"issue_announcement",user,"",status="REPLIED");log("Pull request created.",json_output,url=pr["html_url"])
