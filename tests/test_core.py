@@ -58,6 +58,11 @@ def test_database_explicit_resume_reuses_the_same_attempt(tmp_path):
     assert db.resume(candidate)==attempt
     resumed=db.show(attempt);assert resumed['status']==Status.SELECTED and resumed['error'] is None
     db.close()
+def test_database_explicit_resume_can_record_a_fresh_skip(tmp_path):
+    db=Database(tmp_path/'x.db');candidate=score(issue());attempt=db.create(candidate);db.status(attempt,Status.FAILED,error='old failure')
+    db.status(db.resume(candidate),Status.SKIPPED,error='fresh assessment declined')
+    assert db.show(attempt)['status']==Status.SKIPPED and db.show(attempt)['error']=='fresh assessment declined'
+    db.close()
 def test_database_recovers_abandoned_active_attempt(tmp_path):
     db=Database(tmp_path/'x.db');i=db.create(score(issue()));db.conn.execute("UPDATE attempts SET updated_at='2000-01-01'");db.conn.commit()
     assert db.recover_abandoned()==1 and db.show(i)['status']==Status.FAILED

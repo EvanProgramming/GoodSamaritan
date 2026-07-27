@@ -142,6 +142,13 @@ def run(config:Path|None=typer.Option(None),submit:bool=typer.Option(False),repo
                 if (issue_number is not None or not db.seen(issue.repository,issue.number)) and not local_rejection(issue,s):candidates.append(score(issue,repo_stars=repo["stargazers_count"]))
         if not candidates:log("No eligible untried issues found.",json_output);return
         def rejected(candidate,assessment):
+            # An operator may explicitly retry an earlier failed attempt. Keep
+            # the dashboard truthful when its fresh assessment rejects it
+            # before any clone or edit begins.
+            if issue_number is not None:
+                rejected_attempt=db.resume(candidate)
+                db.status(rejected_attempt,Status.SKIPPED,error=assessment.reasoning)
+                db.event(rejected_attempt,"SKIPPED","Fresh assessment declined this explicit issue before cloning.")
             log(f"Skipping {candidate.issue.repository}#{candidate.issue.number}; trying another candidate from this repository.",json_output,issue=candidate.issue.number,repository=candidate.issue.repository,reason=assessment.reasoning)
         try: selected=choose_candidate(router,candidates,s.limits.max_issue_assessments_per_run,rejected)
         except ModelUnavailable as e:log("No model is available; preserving state without a clone.",json_output,error=str(e));return "MODEL_UNAVAILABLE"
