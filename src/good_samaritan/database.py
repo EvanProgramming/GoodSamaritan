@@ -21,6 +21,8 @@ class Database:
         self.conn.execute("INSERT INTO pr_status(attempt_id,state,mergeable_state,review_state,checks_state,details) VALUES(?,?,?,?,?,?) ON CONFLICT(attempt_id) DO UPDATE SET state=excluded.state,mergeable_state=excluded.mergeable_state,review_state=excluded.review_state,checks_state=excluded.checks_state,details=excluded.details,updated_at=CURRENT_TIMESTAMP",(id,state.get("state",""),state.get("mergeable_state",""),state.get("review_state",""),state.get("checks_state",""),state.get("details","")));self.conn.commit()
     def interaction(self,attempt_id:int,comment_id:int,kind:str,author:str,body:str,reply:str="",status:str="SEEN"):
         self.conn.execute("INSERT OR IGNORE INTO interactions(attempt_id,github_comment_id,kind,author,body,reply,status) VALUES(?,?,?,?,?,?,?)",(attempt_id,comment_id,kind,author,body[:8000],reply[:8000],status));self.conn.commit()
+    def interaction_status(self,attempt_id:int,comment_id:int,kind:str,status:str):
+        self.conn.execute("UPDATE interactions SET status=? WHERE attempt_id=? AND github_comment_id=? AND kind=?",(status,attempt_id,comment_id,kind));self.conn.commit()
     def responded(self,attempt_id:int,comment_id:int,kind:str)->bool:return self.conn.execute("SELECT 1 FROM interactions WHERE attempt_id=? AND github_comment_id=? AND kind=? AND status='REPLIED'",(attempt_id,comment_id,kind)).fetchone() is not None
     def daily_interactions(self,kind:str)->int:return self.conn.execute("SELECT COUNT(*) FROM interactions WHERE kind=? AND date(created_at)=date('now')",(kind,)).fetchone()[0]
     def daily_prs(self)->int:return self.conn.execute("SELECT COUNT(*) FROM attempts WHERE pr_url IS NOT NULL AND date(updated_at)=date('now')").fetchone()[0]
@@ -39,7 +41,7 @@ class Database:
         return {"repositories_explored":q("SELECT COUNT(DISTINCT repository) FROM attempts"),"issues_reviewed":q("SELECT COUNT(*) FROM attempts"),"issues_attempted":q("SELECT COUNT(*) FROM attempts WHERE status NOT IN ('DISCOVERED','SKIPPED')"),"pull_requests":q("SELECT COUNT(*) FROM attempts WHERE pr_url IS NOT NULL"),"merged":q("SELECT COUNT(*) FROM pr_status WHERE state='closed' AND mergeable_state='merged'"),"rejected":q("SELECT COUNT(*) FROM attempts WHERE status='FAILED'"),"lessons":q("SELECT COUNT(*) FROM lessons"),"feedback":q("SELECT COUNT(*) FROM feedback")}
     def history(self): return self.conn.execute("SELECT * FROM attempts ORDER BY id DESC").fetchall()
     def recover_abandoned(self, minutes:int=15)->int:
-        active=("SELECTED","CLONING","ANALYZING","EDITING","TESTING","REVIEWING")
+        active=("SELECTED","CLONING","ANALYZING","EDITING","TESTING","REVIEWING","SUBMITTING")
         placeholders=','.join('?' for _ in active)
         query=f"UPDATE attempts SET status=?,error=?,updated_at=CURRENT_TIMESTAMP WHERE status IN ({placeholders})"
         values=("FAILED","Run interrupted before completion; safe recovery on daemon start.",*active)

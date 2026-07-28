@@ -1,5 +1,5 @@
 from __future__ import annotations
-import json, os, signal, time, tomllib
+import base64, json, os, signal, subprocess, time, tomllib
 from pathlib import Path
 import typer
 from rich.console import Console
@@ -31,6 +31,18 @@ def enable_targeted_paid_model(s,repository:str|None):
     if repository and os.getenv("DEEPSEEK_API_KEY") and s.models.deepseek_model:
         s.models.priority=["deepseek",*[p for p in s.models.priority if p!="deepseek"]]
 def log(msg:str,as_json:bool=False,**data): console.print(json.dumps({"message":msg,**data}) if as_json else msg)
+def push_branch(root:Path,branch:str,token:str):
+    """Push without persisting or exposing the GitHub token in the remote URL."""
+    auth=base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    env=os.environ.copy()
+    env.update({"GIT_TERMINAL_PROMPT":"0","GIT_CONFIG_COUNT":"1","GIT_CONFIG_KEY_0":"http.https://github.com/.extraheader","GIT_CONFIG_VALUE_0":f"AUTHORIZATION: basic {auth}"})
+    try:
+        subprocess.run(["git","push","fork",branch],cwd=root,check=True,capture_output=True,text=True,timeout=180,env=env)
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError("git push timed out after 180 seconds") from error
+    except subprocess.CalledProcessError as error:
+        detail=(error.stderr or error.stdout or "git push returned no diagnostic").strip().replace("\n"," ")[:1000]
+        raise RuntimeError(f"git push failed: {detail}") from error
 def _write_private_env(path:Path, values:dict[str,str]):
     existing={}
     if path.exists():
@@ -185,27 +197,40 @@ def run(config:Path|None=typer.Option(None),submit:bool=typer.Option(False),repo
             tools.enforce_diff_limits(); patch=save_patch(root,s.runtime.work_directory/f"attempt-{attempt}.patch"); body=pr_body(c,commands); draft=s.runtime.work_directory/f"attempt-{attempt}-pr.md";draft.write_text(f"# {c.issue.title}\n\n{body}")
             db.status(attempt,Status.READY,patch_path=str(patch));db.contribution(attempt,c.issue.repository,c.issue.number,"Investigated the issue, prepared a focused patch, and ran validation.","Ready local patch")
             if not submit:log("Dry run complete.",json_output,patch=str(patch),pr_draft=str(draft));return
-            fork=gh.fork(c.issue.repository); branch=f"good-samaritan/issue-{c.issue.number}"; import subprocess
+            db.status(attempt,Status.SUBMITTING);db.event(attempt,"SUBMITTING","Validation and review passed; preparing the remote branch and pull request.")
+            fork=gh.fork(c.issue.repository); branch=f"good-samaritan/issue-{c.issue.number}"
             subprocess.run(["git","checkout","-b",branch],cwd=root,check=True); subprocess.run(["git","config","user.name",s.git_name],cwd=root,check=True);subprocess.run(["git","config","user.email",s.git_email],cwd=root,check=True);subprocess.run(["git","add","-A"],cwd=root,check=True);subprocess.run(["git","commit","-m",f"Fix #{c.issue.number}: {c.issue.title[:50]}"],cwd=root,check=True);subprocess.run(["git","remote","add","fork",fork["clone_url"]],cwd=root,check=True)
-            # Push with the independent account's token, never through the
-            # contributor's ambient git credential. The URL is not logged.
-            push_url=fork["clone_url"].replace("https://",f"https://x-access-token:{s.github.token}@",1)
-            subprocess.run(["git","remote","set-url","fork",push_url],cwd=root,check=True);subprocess.run(["git","push","fork",branch],cwd=root,check=True)
-            # Wait until a tested branch is ready before introducing ourselves.
-            # The optional social note must never block the actual PR.
+            # The credential stays in this subprocess environment; do not put
+            # it in a remote URL, git config, logs, or the process arguments.
+            push_branch(root,branch,s.github.token)
+            opening_comment_id:int|None=None
+            # The branch is pushed and only GitHub PR creation remains. Post
+            # the optional model-written note at this final pre-PR checkpoint.
             if s.social.enabled and (s.social.max_issue_comments_per_day==0 or db.daily_interactions("issue_investigation")<s.social.max_issue_comments_per_day):
                 try:
                     latest_comments=gh.issue_comments(c.issue.repository,c.issue.number)
                     seen=" ".join((item.get("body") or "") for item in latest_comments).lower()
                     if "good samaritan" not in seen and "experimental ai open-source contributor" not in seen:
-                        try:note=investigation_comment(router,c.issue)
-                        except ModelUnavailable:note="This repository caught my eye — Created By @EvanProgramming. ✨\n\nI'm Good Samaritan, an experimental AI open-source contributor. I have prepared and validated a small fix, and I’m about to open the PR for maintainer review. Thanks for maintaining this project!"
-                        posted=gh.comment(c.issue.repository,c.issue.number,note);db.interaction(attempt,posted["id"],"issue_investigation",gh.user()["login"],"",note,"REPLIED")
+                        note=investigation_comment(router,c.issue)
+                        posted=gh.comment(c.issue.repository,c.issue.number,note)
+                        db.interaction(attempt,posted["id"],"issue_investigation",gh.user()["login"],"",note,"REPLIED")
+                        opening_comment_id=posted["id"]
                 except Exception as error:
                     db.event(attempt,"COMMENT_SKIPPED",f"Opening comment could not be posted; continuing to create the PR: {error}")
-            user=gh.user()["login"]; pr=gh.create_pr(c.issue.repository,c.issue.title,body,f"{user}:{branch}",info["default_branch"]);db.status(attempt,Status.PR_CREATED,pr_url=pr["html_url"]);db.contribution(attempt,c.issue.repository,c.issue.number,"Submitted a focused tested fix.","Waiting for maintainer review",pr["html_url"])
-            notice=gh.comment(c.issue.repository,c.issue.number,f"A focused fix is available in {pr['html_url']}. This contribution was autonomously prepared by Good Samaritan with AI assistance; maintainer review is requested.")
-            db.interaction(attempt,notice["id"],"issue_announcement",user,"",status="REPLIED");log("Pull request created.",json_output,url=pr["html_url"])
+            try:
+                user=gh.user()["login"]
+                pr=gh.create_pr(c.issue.repository,c.issue.title,body,f"{user}:{branch}",info["default_branch"])
+            except Exception:
+                if opening_comment_id is not None:
+                    try:
+                        gh.delete_comment(c.issue.repository,opening_comment_id)
+                        db.interaction_status(attempt,opening_comment_id,"issue_investigation","WITHDRAWN")
+                        db.event(attempt,"COMMENT_WITHDRAWN","Removed the opening comment because GitHub PR creation failed.")
+                    except Exception as cleanup_error:
+                        db.event(attempt,"COMMENT_WITHDRAWAL_FAILED",f"PR creation failed and the opening comment could not be removed: {cleanup_error}")
+                raise
+            db.status(attempt,Status.PR_CREATED,pr_url=pr["html_url"]);db.contribution(attempt,c.issue.repository,c.issue.number,"Submitted a focused tested fix.","Waiting for maintainer review",pr["html_url"])
+            log("Pull request created.",json_output,url=pr["html_url"])
     except ModelUnavailable as e:
         if attempt is not None:db.status(attempt,Status.FAILED,error=str(e));db.event(attempt,"FAILED",str(e))
         log("Model providers are temporarily unavailable; daemon will retry sooner.",json_output,error=str(e));return "MODEL_UNAVAILABLE"

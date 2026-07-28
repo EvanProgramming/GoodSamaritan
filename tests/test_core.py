@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 import httpx, pytest
 from good_samaritan.config import load_settings
-from good_samaritan.cli import _write_private_env, _write_toml, enable_targeted_paid_model, choose_candidate
+from good_samaritan.cli import _write_private_env, _write_toml, enable_targeted_paid_model, choose_candidate, push_branch
 from good_samaritan.contribution import AI_DISCLOSURE, pr_body
 from good_samaritan.database import Database
 from good_samaritan.discovery import local_rejection, score, suspicious
@@ -36,6 +36,15 @@ def test_setup_writers_keep_secrets_private(tmp_path):
     env=tmp_path/'.env';config=tmp_path/'config.toml';_write_private_env(env,{'GROQ_API_KEY':'secret'});_write_toml(config,['groq'],{'groq':'example-model'})
     assert (env.stat().st_mode & 0o777)==0o600 and 'secret' in env.read_text()
     configured=load_settings(config);assert configured.models.priority==['groq'] and configured.models.groq_model=='example-model'
+def test_push_uses_ephemeral_auth_without_token_in_arguments(monkeypatch,tmp_path):
+    captured={}
+    def fake_run(command,**kwargs):captured['command']=command;captured.update(kwargs)
+    monkeypatch.setattr('good_samaritan.cli.subprocess.run',fake_run)
+    push_branch(tmp_path,'good-samaritan/issue-7','test-token')
+    assert captured['command']==['git','push','fork','good-samaritan/issue-7']
+    assert 'test-token' not in ' '.join(captured['command'])
+    assert captured['env']['GIT_TERMINAL_PROMPT']=='0'
+    assert captured['env']['GIT_CONFIG_KEY_0']=='http.https://github.com/.extraheader'
 def test_filter_score_and_injection():
     s=load_settings(); assert local_rejection(issue(),s) is None
     assert local_rejection(issue(body="security vulnerability"),s)
@@ -68,6 +77,10 @@ def test_database_recovers_abandoned_active_attempt(tmp_path):
     db=Database(tmp_path/'x.db');i=db.create(score(issue()));db.conn.execute("UPDATE attempts SET updated_at='2000-01-01'");db.conn.commit()
     assert db.recover_abandoned()==1 and db.show(i)['status']==Status.FAILED
     db.close()
+def test_database_recovers_interrupted_submission(tmp_path):
+    db=Database(tmp_path/'x.db');i=db.create(score(issue()));db.status(i,Status.SUBMITTING)
+    assert db.recover_abandoned(minutes=0)==1 and db.show(i)['status']==Status.FAILED
+    db.close()
 def test_database_counts_daily_prs(tmp_path):
     db=Database(tmp_path/'x.db');i=db.create(score(issue()));db.status(i,Status.PR_CREATED,pr_url='https://github.com/a/b/pull/1')
     assert db.daily_prs()==1;db.close()
@@ -92,6 +105,17 @@ def test_workspace_cleans(tmp_path):
 def test_github_errors():
     client=httpx.Client(transport=httpx.MockTransport(lambda r:httpx.Response(403,text='denied')),base_url='https://api.github.com')
     with pytest.raises(GitHubError):GitHub(load_settings(),client).user()
+def test_github_deletes_opening_comment():
+    seen=[]
+    def handler(request):
+        seen.append((request.method,request.url.path));return httpx.Response(204)
+    client=httpx.Client(transport=httpx.MockTransport(handler),base_url='https://api.github.com')
+    GitHub(load_settings(),client).delete_comment('acme/project',123)
+    assert seen==[('DELETE','/repos/acme/project/issues/comments/123')]
+def test_database_marks_withdrawn_opening_comment(tmp_path):
+    db=Database(tmp_path/'x.db');attempt=db.create(score(issue()));db.interaction(attempt,123,'issue_investigation','bot','',status='REPLIED')
+    db.interaction_status(attempt,123,'issue_investigation','WITHDRAWN')
+    assert db.conn.execute('SELECT status FROM interactions').fetchone()['status']=='WITHDRAWN';db.close()
 def test_github_retries_transient_network_error(monkeypatch):
     calls=[]
     def handler(request):

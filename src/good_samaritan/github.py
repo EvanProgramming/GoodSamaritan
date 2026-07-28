@@ -52,6 +52,9 @@ class GitHub:
     def check_runs(self,repo:str,ref:str):return self._get(f"/repos/{repo}/commits/{ref}/check-runs",per_page=100).get("check_runs",[])
     def comment(self,repo:str,number:int,body:str):
         return self._request("POST",f"/repos/{repo}/issues/{number}/comments",json={"body":body},retry_transport=False).json()
+    def delete_comment(self,repo:str,comment_id:int):
+        """Delete Good Samaritan's own issue comment after a failed PR submission."""
+        self._request("DELETE",f"/repos/{repo}/issues/comments/{comment_id}",retry_transport=False)
     def repo(self,repo:str):return self._get(f"/repos/{repo}")
     def fork(self,repo:str):
         r=self._request("POST",f"/repos/{repo}/forks",retry_transport=False)
