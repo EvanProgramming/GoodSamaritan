@@ -11,8 +11,21 @@ class Router:
 
 def test_social_comment_uses_model_at_final_pre_pr_checkpoint():
     router=Router();text=investigation_comment(router,Issue(repository='owner/repo',number=1,title='Bug',body='details'))
-    assert 'interesting' in text and 'PR' in text and 'Created By @EvanProgramming.' in text
+    assert 'interesting' in text and 'PR' in text and 'Created By [@EvanProgramming](https://github.com/EvanProgramming).' in text
     assert 'branch has already been pushed' in router.prompt.lower()
+
+def test_social_comment_discards_model_scratch_work_and_uses_linked_attribution():
+    router=Router()
+    router.complete=lambda prompt,role: ModelReply(provider='test',model='test',content='''We need to draft this.
+
+Potential comment:
+
+Hi! I’m Good Samaritan, an experimental AI contributor. Created By [@EvanProgramming](https://github.com/EvanProgramming) 🌱
+
+Count: 31 words.''')
+    text=investigation_comment(router,Issue(repository='owner/repo',number=1,title='Bug',body='details'))
+    assert text.startswith('Hi!') and 'Potential comment' not in text and 'Count:' not in text
+    assert text.count('Created By')==1
 
 def test_issue_notification_is_structurally_before_pr_creation():
     source=inspect.getsource(run)

@@ -6,7 +6,18 @@ class Database:
     def __init__(self,path:Path): self.path=path; self.conn=sqlite3.connect(path); self.conn.row_factory=sqlite3.Row; self._init()
     def _init(self):
         self.conn.executescript("CREATE TABLE IF NOT EXISTS attempts(id INTEGER PRIMARY KEY, repository TEXT, issue_number INTEGER, status TEXT, score REAL, reasons TEXT, provider TEXT, model TEXT, patch_path TEXT, pr_url TEXT, error TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(repository,issue_number)); CREATE TABLE IF NOT EXISTS commands(id INTEGER PRIMARY KEY, attempt_id INTEGER, command TEXT, exit_code INTEGER, output TEXT); CREATE TABLE IF NOT EXISTS pr_status(attempt_id INTEGER PRIMARY KEY, state TEXT, mergeable_state TEXT, review_state TEXT, checks_state TEXT, details TEXT, updated_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS interactions(id INTEGER PRIMARY KEY, attempt_id INTEGER, github_comment_id INTEGER, kind TEXT, author TEXT, body TEXT, reply TEXT, status TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(attempt_id, github_comment_id, kind)); CREATE TABLE IF NOT EXISTS contributions(id INTEGER PRIMARY KEY,attempt_id INTEGER UNIQUE,repository TEXT,issue_number INTEGER,summary TEXT,status TEXT,pr_url TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP,updated_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS memories(id INTEGER PRIMARY KEY,kind TEXT,repository TEXT,content TEXT,source TEXT,confidence REAL DEFAULT 0.7,created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS feedback(id INTEGER PRIMARY KEY,attempt_id INTEGER,author TEXT,body TEXT,sentiment TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS lessons(id INTEGER PRIMARY KEY,repository TEXT,content TEXT,source TEXT,confidence REAL DEFAULT 0.7,created_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS followup_tasks(id INTEGER PRIMARY KEY,attempt_id INTEGER,github_comment_id INTEGER UNIQUE,kind TEXT,feedback TEXT,status TEXT DEFAULT 'PENDING',result TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP,updated_at TEXT DEFAULT CURRENT_TIMESTAMP); CREATE TABLE IF NOT EXISTS attempt_events(id INTEGER PRIMARY KEY,attempt_id INTEGER,stage TEXT,detail TEXT,created_at TEXT DEFAULT CURRENT_TIMESTAMP);")
-    def seen(self, repo:str, number:int)->bool: return self.conn.execute("SELECT 1 FROM attempts WHERE repository=? AND issue_number=?",(repo,number)).fetchone() is not None
+    def seen(self, repo:str, number:int)->bool:
+        """Return whether an issue has already had an autonomous attempt.
+
+        GitHub's repository casing is not significant, and API payloads can
+        occasionally contain surrounding whitespace.  Normalising at the
+        read boundary prevents a previously skipped issue from re-entering
+        the autonomous queue under a cosmetically different repository name.
+        """
+        return self.conn.execute(
+            "SELECT 1 FROM attempts WHERE lower(trim(repository))=lower(trim(?)) AND issue_number=?",
+            (repo, number),
+        ).fetchone() is not None
     def create(self,c:Candidate)->int:
         cur=self.conn.execute("INSERT INTO attempts(repository,issue_number,status,score,reasons) VALUES(?,?,?,?,?)",(c.issue.repository,c.issue.number,Status.SELECTED,c.score," | ".join(c.reasons))); self.conn.commit(); return cur.lastrowid
     def resume(self,c:Candidate)->int:

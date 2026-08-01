@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from good_samaritan.testing import detect_commands, install_dependencies
+from good_samaritan.testing import detect_commands, install_dependencies, run_validation
 
 
 class RecordingTools:
@@ -36,3 +36,14 @@ def test_node_install_disables_lifecycle_scripts(tmp_path):
 
 def test_repository_without_test_framework_gets_diff_validation(tmp_path):
     assert detect_commands(tmp_path) == ["git diff --check"]
+
+
+def test_validation_requires_every_detected_command_to_pass(tmp_path):
+    (tmp_path / "package.json").write_text("{}")
+    class Tools(RecordingTools):
+        def run(self, command: str):
+            self.ran.append(command)
+            return type("Result", (), {"exit_code": 1 if command=="npm test" else 0})()
+
+    ok,commands=run_validation(Tools(tmp_path),False)
+    assert not ok and commands==["npm test", "npm run lint"]

@@ -3,6 +3,9 @@ min_stars = 100
 active_days = 30
 max_repositories = 10
 max_issues_per_repository = 10
+# Skip very large repositories in autonomous discovery; explicit targeted runs
+# remain permitted after operator review.
+max_repository_size_kb = 50000
 languages = []
 repository_blacklist = []
 organization_blacklist = []
@@ -12,7 +15,11 @@ retry_attempts = 4
 retry_base_seconds = 2
 
 [limits]
-max_agent_steps = 40
+max_agent_steps = 100
+# Paid DeepSeek fallback is intentionally capped lower for targeted runs.
+paid_model_max_agent_steps = 40
+# Retry malformed model actions and recoverable tool errors before abandoning an attempt.
+recoverable_tool_retries = 3
 max_modified_files = 12
 max_diff_lines = 1000
 command_timeout_seconds = 600
@@ -33,6 +40,9 @@ allow_dependency_install = false
 daemon_interval_seconds = 86400
 # Retry provider-wide rate limits sooner than the normal discovery cycle.
 model_retry_interval_seconds = 900
+# After a local no-patch, validation, or review rejection, assess another
+# untried candidate before returning to the normal scheduled interval.
+max_contribution_attempts_per_cycle = 3
 database_path = "good-samaritan.db"
 work_directory = "good-samaritan-work"
 
@@ -51,7 +61,10 @@ openrouter_model = ""
 # Never add DeepSeek to priority: it is enabled only for an explicit --repository run.
 deepseek_model = ""
 # Optional local OpenAI-compatible gateway. Install with `npm install -g omniroute`,
-# run `omniroute`, then set priority to include "omniroute" and use the verified free model `oc/deepseek-v4-flash-free`.
+# run `omniroute`, then set priority to include "omniroute" and use OmniRoute's coding router `auto/coding`.
 # OMNIROUTE_API_KEY is optional only when this URL remains a loopback address.
-omniroute_model = ""
+omniroute_model = "auto/coding"
+# If auto/coding selects an anonymous backend that returns no usable text,
+# retry through the verified free OpenCode model in the same OmniRoute gateway.
+omniroute_fallback_model = "oc/deepseek-v4-flash-free"
 omniroute_base_url = "http://localhost:20128/v1"

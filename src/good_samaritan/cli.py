@@ -24,6 +24,7 @@ from .cleanup import cleanup_orphan_workspaces, cleanup_attempt_artifacts
 from .social import investigation_comment
 from .remediation import process_one as process_remediation
 from .contributing import guidance as contribution_guidance, rejects_automated_contributions
+from .runtime_state import consume_manual_run, write as write_runtime_state
 app=typer.Typer(help="A cautious experimental AI open-source contributor.",no_args_is_help=True); console=Console(); stopping=False
 def settings(config:Path|None):return load_settings(config)
 def enable_targeted_paid_model(s,repository:str|None):
@@ -74,7 +75,7 @@ def setup(config:Path=typer.Option(Path("config.toml")),env_file:Path=typer.Opti
         if typer.confirm(f"Configure {provider}?",default=not selected):
             label=f"{provider} API key"+(" (optional for local OmniRoute)" if provider=="omniroute" else "")
             value=typer.prompt(label,hide_input=True)
-            model=typer.prompt(f"{provider} model name",default="oc/deepseek-v4-flash-free" if provider=="omniroute" else "")
+            model=typer.prompt(f"{provider} model name",default="auto/coding" if provider=="omniroute" else "")
             if model and (value or provider=="omniroute"):selected.append(provider);models[provider]=model;secrets[key]=value
     if not selected:raise typer.BadParameter("at least one provider and model are required")
     _write_private_env(env_file,secrets);_write_toml(config,selected,models)
@@ -144,11 +145,15 @@ def run(config:Path|None=typer.Option(None),submit:bool=typer.Option(False),repo
     if issue_number is not None and not repository:raise typer.BadParameter("--issue requires --repository")
     if submit and (s.runtime.dry_run or not s.runtime.allow_submit):raise typer.BadParameter("submission requires runtime.dry_run=false and runtime.allow_submit=true")
     try:
+        write_runtime_state(s.runtime.database_path,"SEARCHING_ISSUES",f"Searching {'the selected repository' if repository else 'eligible repositories'} for a safe, small issue.")
         log(f"Starting {'targeted ' if repository else ''}issue discovery.",json_output,repository=repository)
         if submit and db.daily_prs()>=s.limits.daily_pr_limit:
             log("Daily PR limit reached; no new contribution will be started.",json_output,limit=s.limits.daily_pr_limit);return
         candidates=[]
         for repo in ([gh.repo(repository)] if repository else gh.discover()):
+            if issue_number is None and repo.get("size",0)>s.github.max_repository_size_kb:
+                log(f"Skipping {repo['full_name']}; repository exceeds the autonomous size limit.",json_output,repository=repo["full_name"])
+                continue
             issues=[gh.issue(repository,issue_number)] if issue_number is not None else gh.issues(repo["full_name"])
             for issue in issues:
                 if issue_number is not None and issue.number!=issue_number:continue
@@ -177,27 +182,38 @@ def run(config:Path|None=typer.Option(None),submit:bool=typer.Option(False),repo
             db.event(attempt,"CONTRIBUTING",f"Loaded contribution guidance from {instructions.count('--- ')} document(s).")
             if rejects_automated_contributions(instructions):
                 db.status(attempt,Status.SKIPPED,error="repository contribution policy rejects AI or bots");log("Repository policy rejects automated contributions.",json_output);return
-            db.status(attempt,Status.EDITING);db.event(attempt,"EDITING","Agent is analyzing repository files.");log("Analyzing and editing within the bounded workspace.",json_output,attempt_id=attempt)
-            CodingAgent(router,tools).run(c.issue.model_dump_json(),memory_context(db,c.issue.repository),lambda tool,target,lines:db.event(attempt,"AGENT",f"{tool}: {target or 'repository'}"+(f" ({lines} proposed line(s))" if lines else "")),instructions)
-            db.status(attempt,Status.TESTING);db.event(attempt,"TESTING","Preparing isolated dependencies and running validation.");log("Running detected validation commands.",json_output,attempt_id=attempt); ok,commands=run_validation(tools,s.runtime.allow_dependency_install)
+            db.status(attempt,Status.EDITING);write_runtime_state(s.runtime.database_path,"REPAIRING",f"Analyzing and editing {c.issue.repository}#{c.issue.number}.");db.event(attempt,"EDITING","Agent is analyzing repository files.");log("Analyzing and editing within the bounded workspace.",json_output,attempt_id=attempt)
+            agent_result=CodingAgent(router,tools).run(c.issue.model_dump_json(),memory_context(db,c.issue.repository),lambda tool,target,lines:db.event(attempt,"AGENT",f"{tool}: {target or 'repository'}"+(f" ({lines} proposed line(s))" if lines else "")),instructions)
+            if not tools.changed_files():
+                message=f"Agent produced no repository change ({agent_result})."
+                db.status(attempt,Status.SKIPPED,error=message);db.event(attempt,"SKIPPED",message)
+                log("No focused patch was produced; trying another candidate instead of validating an empty diff.",json_output,attempt_id=attempt)
+                return "RETRY_CANDIDATE"
+            db.status(attempt,Status.TESTING);write_runtime_state(s.runtime.database_path,"VALIDATING",f"Running validation for {c.issue.repository}#{c.issue.number}.");db.event(attempt,"TESTING","Preparing isolated dependencies and running validation.");log("Running detected validation commands.",json_output,attempt_id=attempt); ok,commands=run_validation(tools,s.runtime.allow_dependency_install)
             # A test failure is feedback for the coding agent, not an automatic
             # dead end. Keep every repair bounded to the same disposable clone.
             for retry in range(s.limits.test_retries):
                 if ok:break
                 failure='\n'.join(f"$ {item.command}\n{item.output[-6000:]}" for item in tools.commands[-6:])
-                db.status(attempt,Status.EDITING);db.event(attempt,"DEBUGGING",f"Validation failed; starting focused repair pass {retry+1} of {s.limits.test_retries}.")
+                db.status(attempt,Status.EDITING);write_runtime_state(s.runtime.database_path,"REPAIRING",f"Repair pass {retry+1} of {s.limits.test_retries} for {c.issue.repository}#{c.issue.number}.");db.event(attempt,"DEBUGGING",f"Validation failed; starting focused repair pass {retry+1} of {s.limits.test_retries}.")
                 CodingAgent(router,tools).run(f"{c.issue.model_dump_json()}\n\nValidation failed. Diagnose and repair the failure below. Do not undo a correct fix; make the smallest change that makes the project validate.\n{failure}",memory_context(db,c.issue.repository),lambda tool,target,lines:db.event(attempt,"AGENT",f"retry {retry+1}: {tool}: {target or 'repository'}"+(f" ({lines} proposed line(s))" if lines else "")),instructions)
                 db.status(attempt,Status.TESTING); ok,commands=run_validation(tools,False)
             for result in tools.commands:db.command(attempt,result.command,result.exit_code,result.output)
             if not ok:
                 last_failure=next((item.output[-1000:] for item in reversed(tools.commands) if item.exit_code),"no validation command succeeded")
-                db.status(attempt,Status.FAILED,error=f"validation failed after repair passes: {last_failure}");db.event(attempt,"FAILED","Validation remained unsuccessful after bounded repair passes.");log("Validation was insufficient after repair passes; saved no remote contribution.",json_output);return
+                db.status(attempt,Status.FAILED,error=f"validation failed after repair passes: {last_failure}");db.event(attempt,"FAILED","Validation remained unsuccessful after bounded repair passes; trying another candidate.");log("Validation was insufficient after repair passes; saved no remote contribution.",json_output);return "RETRY_CANDIDATE"
+            if not tools.changed_files():
+                message="Repair passes left no repository diff; review was skipped."
+                db.status(attempt,Status.SKIPPED,error=message);db.event(attempt,"SKIPPED",message)
+                return "RETRY_CANDIDATE"
             db.status(attempt,Status.REVIEWING); review=review_diff(router,tools)
-            if not review.approved:db.status(attempt,Status.FAILED,error=review.reasoning);return
+            if not review.approved:
+                db.status(attempt,Status.SKIPPED,error=review.reasoning);db.event(attempt,"SKIPPED","Independent review declined the patch; trying another candidate.")
+                return "RETRY_CANDIDATE"
             tools.enforce_diff_limits(); patch=save_patch(root,s.runtime.work_directory/f"attempt-{attempt}.patch"); body=pr_body(c,commands); draft=s.runtime.work_directory/f"attempt-{attempt}-pr.md";draft.write_text(f"# {c.issue.title}\n\n{body}")
             db.status(attempt,Status.READY,patch_path=str(patch));db.contribution(attempt,c.issue.repository,c.issue.number,"Investigated the issue, prepared a focused patch, and ran validation.","Ready local patch")
             if not submit:log("Dry run complete.",json_output,patch=str(patch),pr_draft=str(draft));return
-            db.status(attempt,Status.SUBMITTING);db.event(attempt,"SUBMITTING","Validation and review passed; preparing the remote branch and pull request.")
+            db.status(attempt,Status.SUBMITTING);write_runtime_state(s.runtime.database_path,"SUBMITTING",f"Submitting the validated fix for {c.issue.repository}#{c.issue.number}.");db.event(attempt,"SUBMITTING","Validation and review passed; preparing the remote branch and pull request.")
             fork=gh.fork(c.issue.repository); branch=f"good-samaritan/issue-{c.issue.number}"
             subprocess.run(["git","checkout","-b",branch],cwd=root,check=True); subprocess.run(["git","config","user.name",s.git_name],cwd=root,check=True);subprocess.run(["git","config","user.email",s.git_email],cwd=root,check=True);subprocess.run(["git","add","-A"],cwd=root,check=True);subprocess.run(["git","commit","-m",f"Fix #{c.issue.number}: {c.issue.title[:50]}"],cwd=root,check=True);subprocess.run(["git","remote","add","fork",fork["clone_url"]],cwd=root,check=True)
             # The credential stays in this subprocess environment; do not put
@@ -253,7 +269,7 @@ def daemon(config:Path|None=typer.Option(None)):
     global stopping
     def stop(*_):
         global stopping;stopping=True
-    signal.signal(signal.SIGINT,stop);signal.signal(signal.SIGTERM,stop);s=settings(config)
+    signal.signal(signal.SIGINT,stop);signal.signal(signal.SIGTERM,stop);s=settings(config);write_runtime_state(s.runtime.database_path,"STARTING","Daemon is recovering prior work and checking services.")
     recovery=Database(s.runtime.database_path)
     try:
         # A new daemon instance means any active record belongs to the process
@@ -276,19 +292,30 @@ def daemon(config:Path|None=typer.Option(None)):
         # invoking it internally rather than letting Typer's OptionInfo defaults
         # leak into ordinary Python execution.
         delay=s.runtime.daemon_interval_seconds
-        try:
-            outcome=run(config=config,submit=s.runtime.allow_submit and not s.runtime.dry_run,repository=None,issue_number=None,json_output=False)
-            if outcome=="MODEL_UNAVAILABLE":
-                delay=s.runtime.model_retry_interval_seconds
-                log(f"All model providers are rate-limited or unavailable; retrying in {delay} seconds.")
-        except typer.Exit as e:log(f"Contribution cycle ended safely with exit code {e.exit_code}; daemon will retry next interval.")
+        outcome=None
+        max_cycle_attempts=getattr(s.runtime,"max_contribution_attempts_per_cycle",1)
+        for contribution_attempt in range(max_cycle_attempts):
+            try:
+                write_runtime_state(s.runtime.database_path,"SEARCHING_ISSUES","Searching eligible repositories for the next safe contribution.")
+                outcome=run(config=config,submit=s.runtime.allow_submit and not s.runtime.dry_run,repository=None,issue_number=None,json_output=False)
+                if outcome=="MODEL_UNAVAILABLE":
+                    delay=s.runtime.model_retry_interval_seconds
+                    log(f"All model providers are rate-limited or unavailable; retrying in {delay} seconds.")
+                    break
+                if outcome!="RETRY_CANDIDATE":break
+                if contribution_attempt+1<max_cycle_attempts:
+                    log("Candidate did not yield a safe validated patch; assessing another untried issue in this cycle.")
+            except typer.Exit as e:
+                log(f"Contribution cycle ended safely with exit code {e.exit_code}; daemon will retry next interval.")
+                break
         db=Database(s.runtime.database_path)
         try: generate_journal(db,Path("website"))
         finally: db.close()
+        write_runtime_state(s.runtime.database_path,"WAITING_FOR_MODEL" if outcome=="MODEL_UNAVAILABLE" else "WAITING",("Model providers were unavailable; waiting before retrying." if outcome=="MODEL_UNAVAILABLE" else "Contribution cycle finished; waiting for the next scheduled search."),delay)
         for _ in range(delay):
-            if stopping:break
+            if stopping or consume_manual_run(s.runtime.database_path):break
             time.sleep(1)
-    log("Daemon stopped after cleanup.")
+    write_runtime_state(s.runtime.database_path,"STOPPED","Daemon stopped after cleanup.");log("Daemon stopped after cleanup.")
 @app.command()
 def dashboard(config:Path|None=typer.Option(None),port:int=typer.Option(8765,min=1024,max=65535)):
     """Serve a read-only local operations dashboard."""

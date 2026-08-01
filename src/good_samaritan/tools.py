@@ -5,7 +5,17 @@ from .config import Limits
 from .models import CommandResult
 class ToolSafetyError(ValueError): pass
 class SafeTools:
-    def __init__(self,root:Path,limits:Limits):self.root=root.resolve();self.limits=limits;self.commands: list[CommandResult]=[]
+    def __init__(self,root:Path,limits:Limits):
+        self.root=root.resolve();self.limits=limits;self.commands: list[CommandResult]=[]
+        # Validation runs create an isolated HOME and, optionally, a virtual
+        # environment inside this disposable clone.  Keep those runtime files
+        # out of `git add -A` while allowing a genuine new source/test file to
+        # remain visible to the normal diff and review gates.
+        exclude=self.root/'.git'/'info'/'exclude'
+        if exclude.exists():
+            existing=exclude.read_text(errors="replace")
+            additions="".join(pattern+"\n" for pattern in (".good-samaritan-home/",".good-samaritan-venv/") if pattern not in existing)
+            if additions:exclude.write_text(existing+additions)
     def path(self,path:str)->Path:
         p=(self.root/path).resolve()
         if p!=self.root and self.root not in p.parents:raise ToolSafetyError("path escapes repository")
@@ -19,9 +29,15 @@ class SafeTools:
     def write_file(self,path:str,content:str):
         target=self.path(path)
         if target.exists() and not target.is_file():raise ToolSafetyError("target is not a regular file")
-        target.parent.mkdir(parents=True,exist_ok=True);target.write_text(content)
+        existed=target.exists();target.parent.mkdir(parents=True,exist_ok=True);target.write_text(content)
+        # Make a legitimate new file visible to git diff without staging its
+        # contents.  The later submission still performs the actual add.
+        if not existed and (self.root/'.git').exists():
+            subprocess.run(["git","add","-N","--",str(target.relative_to(self.root))],cwd=self.root,check=True,capture_output=True,text=True)
     def apply_patch(self,path:str,old:str,new:str):
-        target=self.path(path); content=target.read_text()
+        target=self.path(path)
+        if not target.is_file():raise ToolSafetyError("target is not a regular file")
+        content=target.read_text()
         if old not in content:raise ToolSafetyError("patch context was not found")
         target.write_text(content.replace(old,new,1))
     def search_text(self,query:str,path:str=".")->list[str]:
@@ -31,11 +47,22 @@ class SafeTools:
         lowered=command.lower()
         bad=("sudo","rm -rf","curl |","wget |","chmod 777","/etc/","~", " $", "${", "source ")
         if any(x in lowered for x in bad) or re.search(r"(^|\s)(git\s+push|git\s+commit)(\s|$)",lowered):raise ToolSafetyError("dangerous or remote-writing command blocked")
+        # The subprocess already starts in the repository.  An absolute or
+        # parent-directory `cd` defeats that invariant and was the cause of an
+        # agent repeatedly searching / instead of the cloned project.
+        if re.search(r"(^|[;&|]\s*)cd\s+(?:/|~|\.\.)",command):
+            raise ToolSafetyError("command changes directory outside repository")
         # Commands run with a disposable HOME inside the cloned repository so
         # package managers can work without seeing the operator's credentials,
         # shell profiles, or ordinary cache directories.
         isolated_home=self.root/'.good-samaritan-home'; isolated_home.mkdir(exist_ok=True)
-        env={"PATH":os.environ.get("PATH",""),"HOME":str(isolated_home),"PIP_CACHE_DIR":str(isolated_home/'pip-cache'),"PIP_DISABLE_PIP_VERSION_CHECK":"1","GIT_TERMINAL_PROMPT":"0","CI":"true"}
+        path_entries=[os.environ.get("PATH","")]
+        # launchd intentionally supplies a minimal PATH.  Add the verified
+        # user-local Node runtime so npm/package-manager validation works in
+        # the daemon just as it does in an interactive shell.
+        node_bin=Path.home()/".cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin"
+        if node_bin.is_dir():path_entries.insert(0,str(node_bin))
+        env={"PATH":os.pathsep.join(x for x in path_entries if x),"HOME":str(isolated_home),"PIP_CACHE_DIR":str(isolated_home/'pip-cache'),"PIP_DISABLE_PIP_VERSION_CHECK":"1","GIT_TERMINAL_PROMPT":"0","CI":"true"}
         try:r=subprocess.run(command,shell=True,cwd=self.root,text=True,capture_output=True,timeout=self.limits.command_timeout_seconds,env=env) ; out=(r.stdout+r.stderr)[:20000]; result=CommandResult(command=command,exit_code=r.returncode,output=out)
         except subprocess.TimeoutExpired:result=CommandResult(command=command,exit_code=124,output="command timed out")
         self.commands.append(result);return result

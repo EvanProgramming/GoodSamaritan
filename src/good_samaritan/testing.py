@@ -7,7 +7,11 @@ def _python(root:Path)->str:
     return shlex.quote(str(isolated if isolated.exists() else Path(sys.executable)))
 def detect_commands(root:Path)->list[str]:
     python=f"{_python(root)} -m pytest"
-    if (root/"pyproject.toml").exists() or (root/"pytest.ini").exists() or any(root.glob("test_*.py")) or (root/"tests").exists():return [python,f"{_python(root)} -m unittest discover"]
+    # pytest is the common runner for both declared pytest projects and the
+    # ordinary ``test_*.py`` layout.  Do not also invoke unittest discovery:
+    # its different collection rules can turn a passing pytest suite into a
+    # false failure (or hide a failed pytest run).
+    if (root/"pyproject.toml").exists() or (root/"pytest.ini").exists() or any(root.glob("test_*.py")) or (root/"tests").exists():return [python]
     if (root/"package.json").exists():return ["npm test", "npm run lint"]
     if (root/"Cargo.toml").exists():return ["cargo test"]
     if (root/"go.mod").exists():return ["go test ./..."]
@@ -28,7 +32,12 @@ def install_dependencies(tools:SafeTools)->list[str]:
 def run_validation(tools:SafeTools,allow_dependency_install:bool=False)->tuple[bool,list[str]]:
     if allow_dependency_install and detect_commands(tools.root):install_dependencies(tools)
     commands=detect_commands(tools.root); success=False
+    results=[]
     for command in commands:
         result=tools.run(command)
-        success=success or result.exit_code==0
+        results.append(result.exit_code==0)
+    # Every discovered validation command is a gate.  Treating a passing
+    # unittest discovery as success after pytest failed let broken patches
+    # proceed to review.
+    success=bool(results) and all(results)
     return success,commands
