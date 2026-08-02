@@ -29,6 +29,8 @@ daily_pr_limit = 5
 # Try several ranked issues in a repository before giving up on it.
 max_issue_assessments_per_run = 5
 provider_cooldown_seconds = 60
+provider_retry_rounds = 2
+provider_retry_delay_seconds = 5
 # Wait at least this long between calls to the same provider API.
 provider_min_interval_seconds = 65
 

@@ -40,6 +40,7 @@ Use one tool action at a time. Allowed tools: list_files, read_file, search_text
         changed=False
         last_action=""
         repeated_actions=0
+        repeat_recoveries=0
         recoverable_errors=0
         paid_limit=self.tools.limits.paid_model_max_agent_steps
         for step in range(self.tools.limits.max_agent_steps):
@@ -68,6 +69,10 @@ Use one tool action at a time. Allowed tools: list_files, read_file, search_text
                 repeated_actions=repeated_actions+1 if action_key==last_action else 1
                 last_action=action_key
                 if repeated_actions>=4:
+                    if repeat_recoveries<self.tools.limits.recoverable_tool_retries:
+                        repeat_recoveries+=1; repeated_actions=0; last_action=""
+                        context += "\nRecoverable loop detected: the last tool action was repeated without progress. Choose a different relevant file, query, or command and continue the fix. Do not finish yet."
+                        continue
                     return "stopped: repeated identical tool action"
                 if progress:progress(action.tool,action.path or action.command or action.query or "",len((action.content or action.new or "").splitlines()))
                 if action.tool=="list_files": out='\n'.join(self.tools.list_files(action.path or '.'))

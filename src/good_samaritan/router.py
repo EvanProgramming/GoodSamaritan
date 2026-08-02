@@ -19,6 +19,14 @@ class ModelRouter:
         # credentials are configured. Never permit that convenience remotely.
         return bool(self._key(p)) or base.startswith(("http://localhost:","http://127.0.0.1:"))
     def available(self):return [p for p in self.settings.models.priority if self._available(p)]
+    @staticmethod
+    def _retryable(error:Exception)->bool:
+        """Identify transient provider failures worth retrying."""
+        if isinstance(error,httpx.HTTPStatusError):
+            return error.response.status_code in {408,425,429,500,502,503,504}
+        if isinstance(error,(httpx.TimeoutException,httpx.TransportError)):
+            return True
+        return isinstance(error,(ValueError,KeyError,IndexError,TypeError))
     def _pace(self,p:str):
         """Reserve a provider call across daemon and targeted-run processes."""
         # DeepSeek is intentionally injected only for explicit --repository
@@ -60,17 +68,31 @@ class ModelRouter:
     def complete(self,prompt:str,role:str="analysis",json_mode:bool=False)->ModelReply:
         if self.calls>=self.settings.limits.daily_model_calls:raise ModelUnavailable("daily model call limit reached")
         errors=[]
-        for p in self.settings.models.priority:
-            if not self._available(p) or self.cooldowns.get(p,0)>time.monotonic():continue
-            try:
-                self._pace(p)
-                reply=self._call(p,prompt,json_mode); self.calls+=1; self.last_provider=reply.provider; return reply
-            except (httpx.HTTPError,ValueError) as e:
-                # httpx exceptions include request URLs; Gemini puts its key in
-                # that URL. Never persist or print it as part of diagnostics.
-                key=self._key(p)
-                detail=str(e).replace(key, "[REDACTED]") if key else str(e)
-                errors.append(f"{p}: {detail}"); self.cooldowns[p]=time.monotonic()+self.settings.limits.provider_cooldown_seconds
+        retry_rounds=max(1,int(self.settings.limits.provider_retry_rounds))
+        retry_delay=max(0,int(self.settings.limits.provider_retry_delay_seconds))
+        attempted:set[str]=set()
+        for round_no in range(retry_rounds):
+            retryable_seen=False
+            for p in self.settings.models.priority:
+                if p in attempted and round_no==0:continue
+                if not self._available(p):continue
+                # A later round is an intentional recovery attempt. The shared
+                # pacing lock still protects minute-level provider quotas.
+                if round_no==0 and self.cooldowns.get(p,0)>time.monotonic():continue
+                try:
+                    self._pace(p)
+                    reply=self._call(p,prompt,json_mode); self.calls+=1; self.last_provider=reply.provider; return reply
+                except (httpx.HTTPError,ValueError,KeyError,IndexError,TypeError) as e:
+                    # httpx exceptions include request URLs; Gemini puts its key in
+                    # that URL. Never persist or print it as part of diagnostics.
+                    key=self._key(p)
+                    detail=str(e).replace(key, "[REDACTED]") if key else str(e)
+                    errors.append(f"{p}: {detail}"); attempted.add(p)
+                    if self._retryable(e):
+                        retryable_seen=True
+                        self.cooldowns[p]=time.monotonic()+self.settings.limits.provider_cooldown_seconds
+            if not retryable_seen or round_no+1>=retry_rounds:break
+            if retry_delay:time.sleep(retry_delay)
         raise ModelUnavailable("all configured model providers unavailable: "+"; ".join(errors))
     def _call(self,p:str,prompt:str,json_mode:bool=False)->ModelReply:
         model=getattr(self.settings.models,f"{p}_model")

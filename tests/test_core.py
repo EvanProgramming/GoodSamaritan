@@ -177,6 +177,24 @@ def test_router_fallback_and_structured(monkeypatch,tmp_path):
         return ModelReply(provider=p,model='good',content='{"clear":true,"small_scope":true,"expected_behavior":true,"safe":true,"confidence":0.8}')
     router._call=call
     data,reply=router.structured('x',Assessment);assert reply.provider=='gemini' and data.safe
+def test_router_retries_transient_free_provider_in_a_second_round(monkeypatch,tmp_path):
+    s=load_settings();s.runtime.database_path=tmp_path/'state.db';s.models.priority=['groq'];s.models.groq_model='good';s.limits.provider_min_interval_seconds=0;s.limits.provider_retry_delay_seconds=0
+    monkeypatch.setenv('GROQ_API_KEY','x');calls=[]
+    from good_samaritan.models import ModelReply
+    def call(provider,prompt,json_mode=False):
+        calls.append(provider)
+        if len(calls)==1:raise httpx.HTTPStatusError('rate limited',request=httpx.Request('POST','https://groq'),response=httpx.Response(429))
+        return ModelReply(provider='groq',model='good',content='OK')
+    router=ModelRouter(s);router._call=call
+    assert router.complete('x').content=='OK' and calls==['groq','groq']
+def test_router_does_not_retry_permanent_free_provider_error(monkeypatch,tmp_path):
+    s=load_settings();s.runtime.database_path=tmp_path/'state.db';s.models.priority=['groq'];s.models.groq_model='good';s.limits.provider_min_interval_seconds=0;s.limits.provider_retry_delay_seconds=0
+    monkeypatch.setenv('GROQ_API_KEY','x');calls=[]
+    def call(provider,prompt,json_mode=False):
+        calls.append(provider);raise httpx.HTTPStatusError('bad request',request=httpx.Request('POST','https://groq'),response=httpx.Response(400))
+    router=ModelRouter(s);router._call=call
+    with pytest.raises(ModelUnavailable):router.complete('x')
+    assert calls==['groq']
 def test_router_no_key(monkeypatch):
     monkeypatch.delenv('GROQ_API_KEY',raising=False)
     s=load_settings();s.models.priority=['groq'];s.models.groq_model='x'
