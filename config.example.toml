@@ -1,6 +1,7 @@
 [github]
-min_stars = 100
-active_days = 30
+min_stars = 3000
+active_days = 14
+max_issue_age_days = 14
 max_repositories = 10
 max_issues_per_repository = 10
 # Skip very large repositories in autonomous discovery; explicit targeted runs

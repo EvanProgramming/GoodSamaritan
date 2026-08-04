@@ -142,6 +142,14 @@ def run(config:Path|None=typer.Option(None),submit:bool=typer.Option(False),repo
     def model_wait(provider:str,seconds:int):
         if attempt is not None:db.event(attempt,"WAITING_FOR_MODEL",f"Respecting {provider} rate limit; next model call in about {seconds} seconds.")
     router=ModelRouter(s,on_wait=model_wait)
+    def model_unavailable_wait(error:str,seconds:int):
+        if attempt is not None:
+            db.event(attempt,"WAITING_FOR_MODEL",f"API unavailable; preserving the workspace and retrying in about {seconds} seconds: {error[:1200]}")
+            write_runtime_state(s.runtime.database_path,"WAITING_FOR_MODEL",f"API unavailable while preserving {c.issue.repository}#{c.issue.number}; no work was discarded.",seconds)
+    def model_resumed():
+        if attempt is not None:
+            db.event(attempt,"MODEL_RESUMED","Provider recovered; continuing from the preserved workspace.")
+            write_runtime_state(s.runtime.database_path,"REPAIRING",f"Continuing the preserved workspace for {c.issue.repository}#{c.issue.number}.")
     if issue_number is not None and not repository:raise typer.BadParameter("--issue requires --repository")
     if submit and (s.runtime.dry_run or not s.runtime.allow_submit):raise typer.BadParameter("submission requires runtime.dry_run=false and runtime.allow_submit=true")
     try:
@@ -183,7 +191,7 @@ def run(config:Path|None=typer.Option(None),submit:bool=typer.Option(False),repo
             if rejects_automated_contributions(instructions):
                 db.status(attempt,Status.SKIPPED,error="repository contribution policy rejects AI or bots");log("Repository policy rejects automated contributions.",json_output);return
             db.status(attempt,Status.EDITING);write_runtime_state(s.runtime.database_path,"REPAIRING",f"Analyzing and editing {c.issue.repository}#{c.issue.number}.");db.event(attempt,"EDITING","Agent is analyzing repository files.");log("Analyzing and editing within the bounded workspace.",json_output,attempt_id=attempt)
-            agent_result=CodingAgent(router,tools).run(c.issue.model_dump_json(),memory_context(db,c.issue.repository),lambda tool,target,lines:db.event(attempt,"AGENT",f"{tool}: {target or 'repository'}"+(f" ({lines} proposed line(s))" if lines else "")),instructions)
+            agent_result=CodingAgent(router,tools).run(c.issue.model_dump_json(),memory_context(db,c.issue.repository),lambda tool,target,lines:db.event(attempt,"AGENT",f"{tool}: {target or 'repository'}"+(f" ({lines} proposed line(s))" if lines else "")),instructions,s.runtime.model_retry_interval_seconds,model_unavailable_wait,model_resumed)
             if not tools.changed_files():
                 message=f"Agent produced no repository change ({agent_result})."
                 db.status(attempt,Status.SKIPPED,error=message);db.event(attempt,"SKIPPED",message)
@@ -196,7 +204,7 @@ def run(config:Path|None=typer.Option(None),submit:bool=typer.Option(False),repo
                 if ok:break
                 failure='\n'.join(f"$ {item.command}\n{item.output[-6000:]}" for item in tools.commands[-6:])
                 db.status(attempt,Status.EDITING);write_runtime_state(s.runtime.database_path,"REPAIRING",f"Repair pass {retry+1} of {s.limits.test_retries} for {c.issue.repository}#{c.issue.number}.");db.event(attempt,"DEBUGGING",f"Validation failed; starting focused repair pass {retry+1} of {s.limits.test_retries}.")
-                CodingAgent(router,tools).run(f"{c.issue.model_dump_json()}\n\nValidation failed. Diagnose and repair the failure below. Do not undo a correct fix; make the smallest change that makes the project validate.\n{failure}",memory_context(db,c.issue.repository),lambda tool,target,lines:db.event(attempt,"AGENT",f"retry {retry+1}: {tool}: {target or 'repository'}"+(f" ({lines} proposed line(s))" if lines else "")),instructions)
+                CodingAgent(router,tools).run(f"{c.issue.model_dump_json()}\n\nValidation failed. Diagnose and repair the failure below. Do not undo a correct fix; make the smallest change that makes the project validate.\n{failure}",memory_context(db,c.issue.repository),lambda tool,target,lines:db.event(attempt,"AGENT",f"retry {retry+1}: {tool}: {target or 'repository'}"+(f" ({lines} proposed line(s))" if lines else "")),instructions,s.runtime.model_retry_interval_seconds,model_unavailable_wait,model_resumed)
                 db.status(attempt,Status.TESTING); ok,commands=run_validation(tools,False)
             for result in tools.commands:db.command(attempt,result.command,result.exit_code,result.output)
             if not ok:
@@ -206,7 +214,13 @@ def run(config:Path|None=typer.Option(None),submit:bool=typer.Option(False),repo
                 message="Repair passes left no repository diff; review was skipped."
                 db.status(attempt,Status.SKIPPED,error=message);db.event(attempt,"SKIPPED",message)
                 return "RETRY_CANDIDATE"
-            db.status(attempt,Status.REVIEWING); review=review_diff(router,tools)
+            db.status(attempt,Status.REVIEWING)
+            while True:
+                try: review=review_diff(router,tools); break
+                except ModelUnavailable as error:
+                    model_unavailable_wait(str(error),s.runtime.model_retry_interval_seconds)
+                    time.sleep(max(5,s.runtime.model_retry_interval_seconds))
+                    model_resumed()
             if not review.approved:
                 db.status(attempt,Status.SKIPPED,error=review.reasoning);db.event(attempt,"SKIPPED","Independent review declined the patch; trying another candidate.")
                 return "RETRY_CANDIDATE"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 import time
+from datetime import datetime, timezone
 import httpx
 from .config import Settings
 from .models import Issue
@@ -41,7 +42,8 @@ class GitHub:
     def _issue_from_item(self,repo:str,item:dict)->Issue:
         try: comments=[c.get("body") or "" for c in self.issue_comments(repo,item["number"])]
         except GitHubError: comments=[] # Some repositories disable issue comments.
-        return Issue(repository=repo,number=item["number"],title=item["title"],body=item.get("body") or "",labels=[z["name"] for z in item["labels"]],comments=comments,assignee=(item.get("assignee")or{}).get("login"))
+        created=item.get("created_at")
+        return Issue(repository=repo,number=item["number"],title=item["title"],body=item.get("body") or "",labels=[z["name"] for z in item["labels"]],comments=comments,assignee=(item.get("assignee")or{}).get("login"),created_at=created or datetime.now(timezone.utc))
     def issue(self,repo:str,number:int)->Issue:
         """Read one operator-selected issue without enumerating the repository."""
         return self._issue_from_item(repo,self._get(f"/repos/{repo}/issues/{number}"))

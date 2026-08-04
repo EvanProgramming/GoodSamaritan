@@ -1,13 +1,22 @@
 from __future__ import annotations
 from datetime import datetime, timezone
+import re
 from .config import Settings
 from .models import Assessment, Candidate, Issue
 SENSITIVE=("security","vulnerability","password","payment","crypto","authentication bypass")
 INJECTION=("ignore previous instructions","reveal api key","read .env","system prompt","run this command")
+LINKED_PR=(
+    re.compile(r"https?://github\.com/[^\s)]+/pull/\d+",re.I),
+    re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:this|the)\s+issue\b",re.I),
+    re.compile(r"\b(?:pull request|pr)\b[^\n]{0,100}\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b",re.I),
+)
+def linked_pr(text:str)->bool:return any(pattern.search(text) for pattern in LINKED_PR)
 def suspicious(text:str)->bool: return any(x in text.lower() for x in INJECTION)
 def local_rejection(issue:Issue,settings:Settings)->str|None:
     text=(issue.title+' '+issue.body+' '+' '.join(issue.comments)).lower()
-    if issue.has_open_pr:return "already has an open linked PR"
+    age=(datetime.now(timezone.utc)-issue.created_at).total_seconds()/86400
+    if age>settings.github.max_issue_age_days:return f"issue is older than {settings.github.max_issue_age_days} days"
+    if issue.has_open_pr or linked_pr(text):return "issue already links a PR or says a PR will close it"
     if issue.assignee and not settings.github.allow_assigned:return "already assigned"
     if any(x in text for x in SENSITIVE):return "sensitive or security-related issue"
     if suspicious(text):return "possible prompt injection"

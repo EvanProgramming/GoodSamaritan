@@ -1,14 +1,15 @@
 from __future__ import annotations
 import json
+import time
 from typing import Literal
 from pydantic import BaseModel
 from .contributing import guidance
-from .router import ModelRouter
+from .router import ModelRouter, ModelUnavailable
 from .tools import SafeTools, ToolSafetyError
 class Action(BaseModel): tool:Literal["list_files","read_file","search_text","write_file","apply_patch","run_command","read_git_diff","finish"]; path:str|None=None; content:str|None=None; command:str|None=None; query:str|None=None; old:str|None=None; new:str|None=None
 class CodingAgent:
     def __init__(self,router:ModelRouter,tools:SafeTools):self.router=router;self.tools=tools
-    def run(self,issue_text:str,memory_context:str="",progress=None,contribution_guidance:str|None=None)->str:
+    def run(self,issue_text:str,memory_context:str="",progress=None,contribution_guidance:str|None=None,model_retry_interval:int=900,on_model_wait=None,on_model_resume=None)->str:
         personality=__import__('pathlib').Path(__file__).parents[2]/'prompts'/'personality.md'
         principles=personality.read_text() if personality.exists() else 'Be humble; prefer small tested changes.'
         # Free models are especially sensitive to a prompt full of unrelated
@@ -51,6 +52,12 @@ Use one tool action at a time. Allowed tools: list_files, read_file, search_text
                 return "stopped: paid model step limit reached"
             try:
                 action,reply=self.router.structured(context,Action)
+            except ModelUnavailable as error:
+                wait=max(5,int(model_retry_interval))
+                if on_model_wait:on_model_wait(str(error),wait)
+                time.sleep(wait)
+                if on_model_resume:on_model_resume()
+                continue
             except ValueError as error:
                 recoverable_errors+=1
                 if recoverable_errors>self.tools.limits.recoverable_tool_retries:
