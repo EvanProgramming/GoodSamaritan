@@ -2,11 +2,11 @@
 min_stars = 3000
 active_days = 14
 max_issue_age_days = 14
-max_repositories = 10
+max_repositories = 20
 max_issues_per_repository = 10
 # Skip very large repositories in autonomous discovery; explicit targeted runs
 # remain permitted after operator review.
-max_repository_size_kb = 50000
+max_repository_size_kb = 3000000
 languages = []
 repository_blacklist = []
 organization_blacklist = []

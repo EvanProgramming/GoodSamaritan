@@ -78,3 +78,18 @@ def test_agent_waits_and_resumes_when_model_api_is_temporarily_unavailable(tmp_p
     waits=[];resumes=[];monkeypatch.setattr("good_samaritan.agent.time.sleep",lambda _:None)
     router=TemporarilyUnavailable();result=CodingAgent(router,SafeTools(tmp_path,Limits(max_agent_steps=5))).run("Fix it",model_retry_interval=1,on_model_wait=lambda error,seconds:waits.append((error,seconds)),on_model_resume=lambda:resumes.append(True))
     assert result=="done" and router.calls==3 and waits and resumes and (tmp_path/"fix.txt").read_text()=="fixed\n"
+
+
+def test_agent_bounds_rolling_tool_context(tmp_path):
+    for index in range(1,11):
+        (tmp_path/f"file-{index}.txt").write_text("x"*12000)
+    class LargeOutputRouter:
+        def __init__(self):self.calls=0;self.prompt_lengths=[];self.last_provider="omniroute"
+        def structured(self,prompt,*_):
+            self.calls+=1;self.prompt_lengths.append(len(prompt))
+            if self.calls<=10:
+                return Action(tool="read_file",path=f"file-{self.calls}.txt"),ModelReply(provider="omniroute",model="test",content="{}")
+            if self.calls==11:return Action(tool="write_file",path="fix.txt",content="fixed\n"),ModelReply(provider="omniroute",model="test",content="{}")
+            return Action(tool="finish"),ModelReply(provider="omniroute",model="test",content="done")
+    router=LargeOutputRouter();result=CodingAgent(router,SafeTools(tmp_path,Limits(max_agent_steps=20))).run("Fix it")
+    assert result=="done" and max(router.prompt_lengths)<=48000

@@ -35,6 +35,10 @@ class Database:
     def interaction_status(self,attempt_id:int,comment_id:int,kind:str,status:str):
         self.conn.execute("UPDATE interactions SET status=? WHERE attempt_id=? AND github_comment_id=? AND kind=?",(status,attempt_id,comment_id,kind));self.conn.commit()
     def responded(self,attempt_id:int,comment_id:int,kind:str)->bool:return self.conn.execute("SELECT 1 FROM interactions WHERE attempt_id=? AND github_comment_id=? AND kind=? AND status='REPLIED'",(attempt_id,comment_id,kind)).fetchone() is not None
+    def responded_to_any_kind(self,attempt_id:int,comment_id:int)->bool:
+        return self.conn.execute("SELECT 1 FROM interactions WHERE attempt_id=? AND github_comment_id=? AND status IN ('REPLIED','DRAFT')",(attempt_id,comment_id)).fetchone() is not None
+    def is_recorded_own_reply(self,attempt_id:int,body:str)->bool:
+        return self.conn.execute("SELECT 1 FROM interactions WHERE attempt_id=? AND reply=? AND status IN ('REPLIED','DRAFT')",(attempt_id,body[:8000])).fetchone() is not None
     def daily_interactions(self,kind:str)->int:return self.conn.execute("SELECT COUNT(*) FROM interactions WHERE kind=? AND date(created_at)=date('now')",(kind,)).fetchone()[0]
     def daily_prs(self)->int:return self.conn.execute("SELECT COUNT(*) FROM attempts WHERE pr_url IS NOT NULL AND date(updated_at)=date('now')").fetchone()[0]
     def followup_task(self,attempt_id:int,comment_id:int,kind:str,feedback:str):self.conn.execute("INSERT OR IGNORE INTO followup_tasks(attempt_id,github_comment_id,kind,feedback) VALUES(?,?,?,?)",(attempt_id,comment_id,kind,feedback[:8000]));self.conn.commit()

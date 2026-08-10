@@ -42,12 +42,24 @@ class GitHub:
     def _issue_from_item(self,repo:str,item:dict)->Issue:
         try: comments=[c.get("body") or "" for c in self.issue_comments(repo,item["number"])]
         except GitHubError: comments=[] # Some repositories disable issue comments.
+        # Cross-referenced PRs are not always copied into the issue body.  The
+        # PR body/title in the timeline is the authoritative extra signal for
+        # "Fixes/Closes/Resolves #..." detection; failure is non-fatal because
+        # older GitHub Enterprise instances may not expose this endpoint.
+        try:
+            for event in self.issue_timeline(repo,item["number"]):
+                source=((event.get("source") or {}).get("issue") or {})
+                if source.get("pull_request"):
+                    comments.append(f"{source.get('title') or ''}\n{source.get('body') or ''}")
+        except GitHubError:
+            pass
         created=item.get("created_at")
         return Issue(repository=repo,number=item["number"],title=item["title"],body=item.get("body") or "",labels=[z["name"] for z in item["labels"]],comments=comments,assignee=(item.get("assignee")or{}).get("login"),created_at=created or datetime.now(timezone.utc))
     def issue(self,repo:str,number:int)->Issue:
         """Read one operator-selected issue without enumerating the repository."""
         return self._issue_from_item(repo,self._get(f"/repos/{repo}/issues/{number}"))
     def issue_comments(self,repo:str,number:int):return self._get(f"/repos/{repo}/issues/{number}/comments",per_page=100)
+    def issue_timeline(self,repo:str,number:int):return self._get(f"/repos/{repo}/issues/{number}/timeline",per_page=100)
     def pr(self,repo:str,number:int):return self._get(f"/repos/{repo}/pulls/{number}")
     def pr_reviews(self,repo:str,number:int):return self._get(f"/repos/{repo}/pulls/{number}/reviews",per_page=100)
     def pr_comments(self,repo:str,number:int):return self._get(f"/repos/{repo}/issues/{number}/comments",per_page=100)

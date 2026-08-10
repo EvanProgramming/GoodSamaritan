@@ -185,7 +185,7 @@ def run(config:Path|None=typer.Option(None),submit:bool=typer.Option(False),repo
         attempt=db.resume(c) if issue_number is not None else db.create(c); db.status(attempt,Status.CLONING,provider=reply.provider,model=reply.model);db.event(attempt,"RESUMING" if issue_number is not None else "CLONING","Restarting this explicit issue with a fresh temporary clone." if issue_number is not None else "Preparing shallow repository clone.");log("Cloning the selected repository.",json_output,attempt_id=attempt)
         info=gh.repo(c.issue.repository)
         with Workspace(s.runtime.work_directory) as ws:
-            root=ws.clone(info["clone_url"]); tools=SafeTools(root,s.limits); db.status(attempt,Status.ANALYZING)
+            root=ws.clone(info["clone_url"],timeout=max(180,min(900,s.limits.command_timeout_seconds))); tools=SafeTools(root,s.limits); db.status(attempt,Status.ANALYZING)
             instructions=contribution_guidance(root)
             db.event(attempt,"CONTRIBUTING",f"Loaded contribution guidance from {instructions.count('--- ')} document(s).")
             if rejects_automated_contributions(instructions):
@@ -259,12 +259,23 @@ def run(config:Path|None=typer.Option(None),submit:bool=typer.Option(False),repo
                     except Exception as cleanup_error:
                         db.event(attempt,"COMMENT_WITHDRAWAL_FAILED",f"PR creation failed and the opening comment could not be removed: {cleanup_error}")
                 raise
+            finally:
+                # The clone is removed by Workspace.__exit__.  Patch and PR
+                # drafts are also Good Samaritan-owned artifacts and must not
+                # survive a completed submission or a failed PR creation.
+                removed=cleanup_attempt_artifacts(s.runtime.work_directory,attempt)
+                if removed:db.event(attempt,"LOCAL_CLEANUP",f"Removed {len(removed)} local submission artifact(s).")
             db.status(attempt,Status.PR_CREATED,pr_url=pr["html_url"]);db.contribution(attempt,c.issue.repository,c.issue.number,"Submitted a focused tested fix.","Waiting for maintainer review",pr["html_url"])
             log("Pull request created.",json_output,url=pr["html_url"])
     except ModelUnavailable as e:
+        if attempt is not None and submit:
+            cleanup_attempt_artifacts(s.runtime.work_directory,attempt)
         if attempt is not None:db.status(attempt,Status.FAILED,error=str(e));db.event(attempt,"FAILED",str(e))
         log("Model providers are temporarily unavailable; daemon will retry sooner.",json_output,error=str(e));return "MODEL_UNAVAILABLE"
     except Exception as e:
+        if attempt is not None and submit:
+            removed=cleanup_attempt_artifacts(s.runtime.work_directory,attempt)
+            if removed:db.event(attempt,"LOCAL_CLEANUP",f"Removed {len(removed)} local submission artifact(s) after failure.")
         if attempt is not None:db.status(attempt,Status.FAILED,error=str(e));db.event(attempt,"FAILED",str(e))
         log("Run failed safely.",json_output,error=str(e));raise typer.Exit(1)
     finally:db.close()

@@ -7,8 +7,10 @@ SENSITIVE=("security","vulnerability","password","payment","crypto","authenticat
 INJECTION=("ignore previous instructions","reveal api key","read .env","system prompt","run this command")
 LINKED_PR=(
     re.compile(r"https?://github\.com/[^\s)]+/pull/\d+",re.I),
-    re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:this|the)\s+issue\b",re.I),
-    re.compile(r"\b(?:pull request|pr)\b[^\n]{0,100}\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b",re.I),
+    re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:this|the)\s+(?:issue|bug)\b",re.I),
+    re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:#\d+|[\w.-]+/[\w.-]+#\d+|https?://github\.com/[^\s)]+/(?:issues|pull)/\d+)\b",re.I),
+    re.compile(r"\b(?:pull request|pull-request|pr)\b[^\n]{0,160}\b(?:will\s+)?(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b",re.I),
+    re.compile(r"\b(?:#\d+|[\w.-]+/[\w.-]+#\d+|https?://github\.com/[^\s)]+/pull/\d+)\b[^\n]{0,120}\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b",re.I),
 )
 def linked_pr(text:str)->bool:return any(pattern.search(text) for pattern in LINKED_PR)
 def suspicious(text:str)->bool: return any(x in text.lower() for x in INJECTION)

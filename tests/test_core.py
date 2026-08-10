@@ -57,6 +57,8 @@ def test_discovery_rejects_old_and_already_linked_pr_issues():
     assert "older than" in (local_rejection(old,s) or "")
     linked=issue(body="A maintainer linked a PR that will close this issue: https://github.com/acme/project/pull/99")
     assert linked_pr(linked.body) and "links a PR" in (local_rejection(linked,s) or "")
+    for text in ("Fixes #99", "Resolved acme/project#99", "[PR #99](https://github.com/acme/project/pull/99) will close this issue"):
+        assert linked_pr(text)
 def test_repository_size_limit_is_configurable(tmp_path):
     config=tmp_path/'config.toml';config.write_text('[github]\nmax_repository_size_kb=123\n')
     assert load_settings(config).github.max_repository_size_kb==123
