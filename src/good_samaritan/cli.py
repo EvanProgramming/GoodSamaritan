@@ -12,7 +12,7 @@ from .discovery import local_rejection, score
 from .github import GitHub, GitHubError
 from .models import Assessment, Candidate, Status
 from .review import review_diff
-from .router import ModelRouter, ModelUnavailable
+from .router import ModelBudgetExhausted, ModelRouter, ModelUnavailable
 from .testing import run_validation
 from .tools import SafeTools
 from .workspace import Workspace
@@ -58,7 +58,9 @@ def _write_toml(path:Path, model_priority:list[str], models:dict[str,str], live:
     base=(Path(__file__).parents[2]/"config.example.toml")
     text=base.read_text() if base.exists() else ""
     text=text.replace('dry_run = true',f'dry_run = {str(not live).lower()}').replace('allow_submit = false',f'allow_submit = {str(live).lower()}')
-    text=text.replace('priority = ["groq", "gemini", "openrouter"]',"priority = ["+", ".join(f'\"{x}\"' for x in model_priority)+"]")
+    priority="priority = ["+", ".join(f'\"{x}\"' for x in model_priority)+"]"
+    for default in ('priority = ["groq", "gemini", "openrouter"]','priority = ["omniroute", "groq", "gemini", "openrouter"]'):
+        text=text.replace(default,priority)
     for provider,model in models.items(): text=text.replace(f'{provider}_model = ""',f'{provider}_model = "{model}"')
     path.write_text(text)
 @app.command()
@@ -177,6 +179,7 @@ def run(config:Path|None=typer.Option(None),submit:bool=typer.Option(False),repo
                 db.event(rejected_attempt,"SKIPPED","Fresh assessment declined this explicit issue before cloning.")
             log(f"Skipping {candidate.issue.repository}#{candidate.issue.number}; trying another candidate from this repository.",json_output,issue=candidate.issue.number,repository=candidate.issue.repository,reason=assessment.reasoning)
         try: selected=choose_candidate(router,candidates,s.limits.max_issue_assessments_per_run,rejected)
+        except ModelBudgetExhausted as e:log("This run reached its model-call budget; ending safely until the next scheduled cycle.",json_output,error=str(e));return "MODEL_BUDGET_EXHAUSTED"
         except ModelUnavailable as e:log("No model is available; preserving state without a clone.",json_output,error=str(e));return "MODEL_UNAVAILABLE"
         if not selected:
             log("No suitable issue was found after assessing ranked candidates.",json_output,repository=repository,assessed=min(len(candidates),s.limits.max_issue_assessments_per_run));return
@@ -215,9 +218,14 @@ def run(config:Path|None=typer.Option(None),submit:bool=typer.Option(False),repo
                 db.status(attempt,Status.SKIPPED,error=message);db.event(attempt,"SKIPPED",message)
                 return "RETRY_CANDIDATE"
             db.status(attempt,Status.REVIEWING)
+            review_waits=0
             while True:
                 try: review=review_diff(router,tools); break
+                except ModelBudgetExhausted:
+                    raise
                 except ModelUnavailable as error:
+                    review_waits+=1
+                    if review_waits>s.limits.max_model_wait_retries:raise
                     model_unavailable_wait(str(error),s.runtime.model_retry_interval_seconds)
                     time.sleep(max(5,s.runtime.model_retry_interval_seconds))
                     model_resumed()
@@ -267,6 +275,12 @@ def run(config:Path|None=typer.Option(None),submit:bool=typer.Option(False),repo
                 if removed:db.event(attempt,"LOCAL_CLEANUP",f"Removed {len(removed)} local submission artifact(s).")
             db.status(attempt,Status.PR_CREATED,pr_url=pr["html_url"]);db.contribution(attempt,c.issue.repository,c.issue.number,"Submitted a focused tested fix.","Waiting for maintainer review",pr["html_url"])
             log("Pull request created.",json_output,url=pr["html_url"])
+    except ModelBudgetExhausted as e:
+        if attempt is not None and submit:
+            cleanup_attempt_artifacts(s.runtime.work_directory,attempt)
+        if attempt is not None:
+            db.status(attempt,Status.FAILED,error=str(e));db.event(attempt,"MODEL_BUDGET_EXHAUSTED",str(e))
+        log("This run reached its model-call budget; ending safely until the next scheduled cycle.",json_output,error=str(e));return "MODEL_BUDGET_EXHAUSTED"
     except ModelUnavailable as e:
         if attempt is not None and submit:
             cleanup_attempt_artifacts(s.runtime.work_directory,attempt)
@@ -326,6 +340,10 @@ def daemon(config:Path|None=typer.Option(None)):
                 if outcome=="MODEL_UNAVAILABLE":
                     delay=s.runtime.model_retry_interval_seconds
                     log(f"All model providers are rate-limited or unavailable; retrying in {delay} seconds.")
+                    break
+                if outcome=="MODEL_BUDGET_EXHAUSTED":
+                    delay=s.runtime.daemon_interval_seconds
+                    log(f"The run exhausted its model-call budget; retrying in {delay} seconds.")
                     break
                 if outcome!="RETRY_CANDIDATE":break
                 if contribution_attempt+1<max_cycle_attempts:

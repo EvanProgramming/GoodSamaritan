@@ -4,7 +4,7 @@ import time
 from typing import Literal
 from pydantic import BaseModel
 from .contributing import guidance
-from .router import ModelRouter, ModelUnavailable
+from .router import ModelBudgetExhausted, ModelRouter, ModelUnavailable
 from .tools import SafeTools, ToolSafetyError
 class Action(BaseModel): tool:Literal["list_files","read_file","search_text","write_file","apply_patch","run_command","read_git_diff","finish"]; path:str|None=None; content:str|None=None; command:str|None=None; query:str|None=None; old:str|None=None; new:str|None=None
 class CodingAgent:
@@ -54,6 +54,7 @@ Use one tool action at a time. Allowed tools: list_files, read_file, search_text
         repeated_actions=0
         repeat_recoveries=0
         recoverable_errors=0
+        model_waits=0
         paid_limit=self.tools.limits.paid_model_max_agent_steps
         for step in range(self.tools.limits.max_agent_steps):
             # Explicit targeted runs may fall back to the operator's paid
@@ -63,7 +64,15 @@ Use one tool action at a time. Allowed tools: list_files, read_file, search_text
                 return "stopped: paid model step limit reached"
             try:
                 action,reply=self.router.structured(context,Action)
+            except ModelBudgetExhausted:
+                # A spent run budget is terminal for this attempt. Waiting
+                # cannot replenish the same router instance and would keep
+                # the daemon in a false "waiting for model" loop.
+                raise
             except ModelUnavailable as error:
+                model_waits+=1
+                if model_waits>self.tools.limits.max_model_wait_retries:
+                    raise
                 wait=max(5,int(model_retry_interval))
                 if on_model_wait:on_model_wait(str(error),wait)
                 time.sleep(wait)
@@ -75,6 +84,7 @@ Use one tool action at a time. Allowed tools: list_files, read_file, search_text
                     return f"stopped: model action remained invalid after {self.tools.limits.recoverable_tool_retries} retries"
                 append_context(f"\nRecoverable model action error ({recoverable_errors}/{self.tools.limits.recoverable_tool_retries}): {str(error)[:1200]}. Return one valid Action JSON and do not repeat the malformed response.")
                 continue
+            model_waits=0
             if reply.provider=="deepseek" and step>=paid_limit:
                 return "stopped: paid model step limit reached"
             if action.tool=="finish":

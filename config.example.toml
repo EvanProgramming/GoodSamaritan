@@ -21,6 +21,8 @@ max_agent_steps = 100
 paid_model_max_agent_steps = 40
 # Retry malformed model actions and recoverable tool errors before abandoning an attempt.
 recoverable_tool_retries = 3
+# Do not wait forever inside one attempt when every model provider is unavailable.
+max_model_wait_retries = 3
 max_modified_files = 12
 max_diff_lines = 1000
 command_timeout_seconds = 600
@@ -57,7 +59,7 @@ max_issue_comments_per_day = 0
 allow_large_repositories = false
 
 [models]
-priority = ["groq", "gemini", "openrouter"]
+priority = ["omniroute", "groq", "gemini", "openrouter"]
 groq_model = ""
 gemini_model = ""
 openrouter_model = ""

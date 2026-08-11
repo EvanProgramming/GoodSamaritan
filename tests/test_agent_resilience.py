@@ -80,6 +80,19 @@ def test_agent_waits_and_resumes_when_model_api_is_temporarily_unavailable(tmp_p
     assert result=="done" and router.calls==3 and waits and resumes and (tmp_path/"fix.txt").read_text()=="fixed\n"
 
 
+def test_agent_bounds_provider_unavailability_waits(tmp_path,monkeypatch):
+    class Unavailable:
+        def structured(self,*_): raise ModelUnavailable("provider down")
+    monkeypatch.setattr("good_samaritan.agent.time.sleep",lambda _:None)
+    tools=SafeTools(tmp_path,Limits(max_agent_steps=20,max_model_wait_retries=2))
+    try:
+        CodingAgent(Unavailable(),tools).run("Fix it",model_retry_interval=1)
+    except ModelUnavailable:
+        pass
+    else:
+        raise AssertionError("provider outage should be bounded and surfaced")
+
+
 def test_agent_bounds_rolling_tool_context(tmp_path):
     for index in range(1,11):
         (tmp_path/f"file-{index}.txt").write_text("x"*12000)

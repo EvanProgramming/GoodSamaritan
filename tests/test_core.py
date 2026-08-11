@@ -11,7 +11,7 @@ from good_samaritan.database import Database
 from good_samaritan.discovery import linked_pr, local_rejection, score, suspicious
 from good_samaritan.github import GitHub, GitHubError
 from good_samaritan.models import Assessment, Issue, Status
-from good_samaritan.router import ModelRouter, ModelUnavailable
+from good_samaritan.router import ModelBudgetExhausted, ModelRouter, ModelUnavailable
 from good_samaritan.tools import SafeTools, ToolSafetyError
 from good_samaritan.workspace import Workspace
 
@@ -186,6 +186,23 @@ def test_router_fallback_and_structured(monkeypatch,tmp_path):
         return ModelReply(provider=p,model='good',content='{"clear":true,"small_scope":true,"expected_behavior":true,"safe":true,"confidence":0.8}')
     router._call=call
     data,reply=router.structured('x',Assessment);assert reply.provider=='gemini' and data.safe
+def test_router_falls_from_groq_to_omniroute(monkeypatch,tmp_path):
+    s=load_settings();s.runtime.database_path=tmp_path/'state.db';s.models.priority=['groq','omniroute'];s.models.groq_model='bad';s.models.omniroute_model='auto/coding';s.limits.provider_min_interval_seconds=0;s.limits.provider_retry_delay_seconds=0
+    monkeypatch.setenv('GROQ_API_KEY','x');calls=[]
+    from good_samaritan.models import ModelReply
+    def call(provider,prompt,json_mode=False):
+        calls.append(provider)
+        if provider=='groq':raise httpx.HTTPStatusError('rate',request=httpx.Request('POST','https://groq'),response=httpx.Response(503))
+        return ModelReply(provider='omniroute',model='auto/coding',content='OK')
+    router=ModelRouter(s);router._call=call
+    assert router.complete('x').provider=='omniroute' and calls==['groq','omniroute']
+def test_router_does_not_wait_after_per_run_budget_is_spent(monkeypatch,tmp_path):
+    s=load_settings();s.runtime.database_path=tmp_path/'state.db';s.models.priority=['groq'];s.models.groq_model='good';s.limits.daily_model_calls=1;s.limits.provider_min_interval_seconds=0
+    monkeypatch.setenv('GROQ_API_KEY','x')
+    from good_samaritan.models import ModelReply
+    router=ModelRouter(s);router._call=lambda *args,**kwargs:ModelReply(provider='groq',model='good',content='OK')
+    assert router.complete('x').content=='OK'
+    with pytest.raises(ModelBudgetExhausted):router.complete('x')
 def test_router_retries_transient_free_provider_in_a_second_round(monkeypatch,tmp_path):
     s=load_settings();s.runtime.database_path=tmp_path/'state.db';s.models.priority=['groq'];s.models.groq_model='good';s.limits.provider_min_interval_seconds=0;s.limits.provider_retry_delay_seconds=0
     monkeypatch.setenv('GROQ_API_KEY','x');calls=[]

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from .config import Settings
 from .models import ModelReply
 class ModelUnavailable(RuntimeError): pass
+class ModelBudgetExhausted(ModelUnavailable): pass
 class ModelRouter:
     def __init__(self,settings:Settings,client:httpx.Client|None=None,on_wait:Callable[[str,int],None]|None=None): self.settings=settings; self.client=client or httpx.Client(timeout=30); self.cooldowns:dict[str,float]={}; self.calls=0;self.on_wait=on_wait;self.last_provider:str|None=None;self.rate_state=Path(settings.runtime.database_path).parent/'model-rate-limit.json'
     def _key(self,p:str)->str:return os.getenv(f"{p.upper()}_API_KEY", "")
@@ -66,7 +67,7 @@ class ModelRouter:
             if isinstance(content,str):parts.append(content)
         return "".join(parts)
     def complete(self,prompt:str,role:str="analysis",json_mode:bool=False)->ModelReply:
-        if self.calls>=self.settings.limits.daily_model_calls:raise ModelUnavailable("daily model call limit reached")
+        if self.calls>=self.settings.limits.daily_model_calls:raise ModelBudgetExhausted("per-run model call budget reached")
         errors=[]
         retry_rounds=max(1,int(self.settings.limits.provider_retry_rounds))
         retry_delay=max(0,int(self.settings.limits.provider_retry_delay_seconds))
