@@ -179,7 +179,12 @@ def run(config:Path|None=typer.Option(None),submit:bool=typer.Option(False),repo
             issues=[gh.issue(repository,issue_number)] if issue_number is not None else gh.issues(repo["full_name"])
             for issue in issues:
                 if issue_number is not None and issue.number!=issue_number:continue
-                if (issue_number is not None or not db.seen(issue.repository,issue.number)) and not local_rejection(issue,s):candidates.append(score(issue,repo_stars=repo["stargazers_count"]))
+                rejection=local_rejection(issue,s)
+                # Explicit targeted runs are operator-approved investigations;
+                # an old but still-open issue may be valid. Keep all other
+                # safety and duplicate-PR rejections active.
+                if issue_number is not None and rejection==f"issue is older than {s.github.max_issue_age_days} days":rejection=None
+                if (issue_number is not None or not db.seen(issue.repository,issue.number)) and not rejection:candidates.append(score(issue,repo_stars=repo["stargazers_count"]))
         if not candidates:log("No eligible untried issues found.",json_output);return
         def rejected(candidate,assessment):
             # An operator may explicitly retry an earlier failed attempt. Keep
