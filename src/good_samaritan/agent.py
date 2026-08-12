@@ -65,6 +65,8 @@ Use one tool action at a time. Allowed tools: list_files, read_file, search_text
         model_waits=0
         exploration_steps=0
         exploration_nudges=0
+        inspection_locked=False
+        lock_violations=0
         edit_actions=0
         paid_limit=self.tools.limits.paid_model_max_agent_steps
         for step in range(step_limit or self.tools.limits.max_agent_steps):
@@ -104,10 +106,17 @@ Use one tool action at a time. Allowed tools: list_files, read_file, search_text
                 return "stopped: paid model step limit reached"
             if action.tool=="finish":
                 if not changed or not self.tools.changed_files():
-                    append_context("\nYou cannot finish yet: no repository change has been made. Inspect the relevant implementation and make a focused fix, or explain through tool evidence why this is impossible.")
+                    lock_violations+=1 if inspection_locked else 0
+                    append_context("\nYou cannot finish yet: no repository change has been made. The inspection budget is exhausted; the next action must be apply_patch or write_file." if inspection_locked else "\nYou cannot finish yet: no repository change has been made. Inspect the relevant implementation and make a focused fix, or explain through tool evidence why this is impossible.")
+                    if inspection_locked and lock_violations>=2:return "stopped: agent refused to edit after inspection budget"
                     continue
                 return reply.content
             try:
+                if inspection_locked and action.tool not in {"write_file","apply_patch"}:
+                    lock_violations+=1
+                    append_context(f"\nInspection budget enforcement rejected {action.tool}. Do not inspect further; use apply_patch or write_file now ({lock_violations}/2).")
+                    if lock_violations>=2:return "stopped: agent refused to edit after inspection budget"
+                    continue
                 action_key=json.dumps(action.model_dump(),sort_keys=True)
                 repeated_actions=repeated_actions+1 if action_key==last_action else 1
                 last_action=action_key
@@ -135,12 +144,14 @@ Use one tool action at a time. Allowed tools: list_files, read_file, search_text
                     continue
                 if action.tool in {"list_files","read_file","search_text","read_git_diff"}:
                     exploration_steps+=1
-                    if exploration_steps>=self.tools.limits.max_exploration_steps:
+                    exploration_limit=1 if force_edit else self.tools.limits.max_exploration_steps
+                    if exploration_steps>=exploration_limit:
                         exploration_nudges+=1;exploration_steps=0
+                        inspection_locked=True;lock_violations=0
                         append_context("\nInspection budget reached. Your next action must be apply_patch or write_file using the evidence already collected. Use the exact path and replacement text; do not perform another broad search.")
                         if exploration_nudges>=3 and not self.tools.changed_files():return "stopped: agent explored without producing a patch"
                 elif self.tools.changed_files():
-                    exploration_steps=0;exploration_nudges=0
+                    exploration_steps=0;exploration_nudges=0;inspection_locked=False;lock_violations=0
                 if changed:self.tools.enforce_diff_limits()
                 append_context("\nTool result:\n"+out[:8000])
                 if edit_actions>=max(1,int(getattr(self.tools.limits,"max_edit_actions",4))):
