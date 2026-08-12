@@ -134,6 +134,13 @@ def test_safe_tools_applies_standard_git_unified_patch_document(tmp_path):
     document=('--- a/calc.py\n'+'+++ b/calc.py\n'+'@@\n'+' def add(a, b):\n'+'-    return a - b\n'+'+    return a + b\n')
     tools.apply_patch_document(document)
     assert (tmp_path/'calc.py').read_text()=='def add(a, b):\n    return a + b\n'
+def test_safe_tools_applies_fenced_git_diff_document(tmp_path):
+    subprocess.run(['git','init'],cwd=tmp_path,check=True,capture_output=True)
+    (tmp_path/'calc.py').write_text('def add(a, b):\n    return a - b\n')
+    tools=SafeTools(tmp_path,load_settings().limits)
+    document=('```diff\n'+'diff --git a/calc.py b/calc.py\n'+'index 123..456 100644\n'+'--- a/calc.py\n'+'+++ b/calc.py\n'+'@@ -1,2 +1,2 @@\n'+' def add(a, b):\n'+'-    return a - b\n'+'+    return a + b\n'+'```')
+    tools.apply_patch_document(document)
+    assert (tmp_path/'calc.py').read_text()=='def add(a, b):\n    return a + b\n'
 def test_safe_tools_rejects_directory_patch(tmp_path):
     subprocess.run(['git','init'],cwd=tmp_path,check=True,capture_output=True)
     tools=SafeTools(tmp_path,load_settings().limits)

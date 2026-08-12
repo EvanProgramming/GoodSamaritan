@@ -50,10 +50,15 @@ class SafeTools:
         text=document.strip()
         if text.startswith("```"):
             text=text.removeprefix("```").removesuffix("```").strip()
-        if text.startswith("--- ") and "+++ " in text:
+        # Models sometimes wrap a normal git diff in a markdown fence or add
+        # `diff --git`/`index` headers. Extract the actual file headers before
+        # translating it to the bounded patch dialect below.
+        standard_start=next((i for i,line in enumerate(text.splitlines()) if line.startswith("--- ")),None)
+        standard_lines=text.splitlines(keepends=True)
+        if standard_start is not None and any(line.startswith("+++ ") for line in standard_lines[standard_start+1:]):
             # Accept standard git unified diffs returned by coding models.
             normalized=["*** Begin Patch\n"]
-            for line in text.splitlines(keepends=True):
+            for line in standard_lines[standard_start:]:
                 if line.startswith("--- "):continue
                 if line.startswith("+++ "):
                     path=line[4:].strip().removeprefix("b/")
