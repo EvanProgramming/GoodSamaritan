@@ -20,7 +20,7 @@ Set `GOOD_SAMARITAN_GITHUB_TOKEN` to a **classic** token (`ghp_…`) from the de
 
 ### OmniRoute free-model gateway
 
-OmniRoute can be used as a local, OpenAI-compatible provider. Good Samaritan uses OmniRoute's dynamic coding router `auto/coding`, which selects an available coding backend. Install and start the gateway, then add it before the cloud providers in `config.toml`:
+OmniRoute can be used as a local, OpenAI-compatible provider. Good Samaritan uses a verified non-DeepSeek coding backend first. Install and start the gateway, then add it before the cloud providers in `config.toml`:
 
 ```bash
 npm install -g omniroute
@@ -30,13 +30,13 @@ omniroute
 ```toml
 [models]
 priority = ["omniroute", "groq", "gemini"]
-omniroute_model = "auto/coding"
-omniroute_fallback_model = "oc/big-pickle"
+omniroute_model = "oc/big-pickle"
+omniroute_fallback_model = "oc/nemotron-3-ultra-free"
 omniroute_base_url = "http://localhost:20128/v1"
 ```
 
-Good Samaritan always tries `auto/coding` first. If the selected route returns
-an error or empty response, it retries inside OmniRoute with a separate
+Good Samaritan uses a verified OmniRoute coding model first. If it returns an
+error or empty response, it retries inside OmniRoute with a separate
 non-DeepSeek coding model instead of sending an unusable result to the
 contribution agent. Cloud-provider pacing waits are bounded; a provider whose
 next call would exceed that budget is skipped so the next provider can run.

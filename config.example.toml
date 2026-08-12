@@ -77,10 +77,10 @@ openrouter_model = ""
 # Never add DeepSeek to priority: it is enabled only for an explicit --repository run.
 deepseek_model = ""
 # Optional local OpenAI-compatible gateway. Install with `npm install -g omniroute`,
-# run `omniroute`, then set priority to include "omniroute" and use OmniRoute's coding router `auto/coding`.
+# run `omniroute`, then set priority to include "omniroute" and use a verified OmniRoute coding model.
 # OMNIROUTE_API_KEY is optional only when this URL remains a loopback address.
-omniroute_model = "auto/coding"
-# If auto/coding or another OmniRoute model fails, retry through this
-# non-DeepSeek coding model in the same gateway.
-omniroute_fallback_model = "oc/big-pickle"
+omniroute_model = "oc/big-pickle"
+# If the primary model fails, retry through this other non-DeepSeek coding
+# model in the same gateway.
+omniroute_fallback_model = "oc/nemotron-3-ultra-free"
 omniroute_base_url = "http://localhost:20128/v1"

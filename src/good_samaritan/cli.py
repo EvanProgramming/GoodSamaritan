@@ -79,7 +79,7 @@ def setup(config:Path=typer.Option(Path("config.toml")),env_file:Path=typer.Opti
         if typer.confirm(f"Configure {provider}?",default=not selected):
             label=f"{provider} API key"+(" (optional for local OmniRoute)" if provider=="omniroute" else "")
             value=typer.prompt(label,hide_input=True)
-            model=typer.prompt(f"{provider} model name",default="auto/coding" if provider=="omniroute" else "")
+            model=typer.prompt(f"{provider} model name",default="oc/big-pickle" if provider=="omniroute" else "")
             if model and (value or provider=="omniroute"):selected.append(provider);models[provider]=model;secrets[key]=value
     if not selected:raise typer.BadParameter("at least one provider and model are required")
     _write_private_env(env_file,secrets);_write_toml(config,selected,models)
