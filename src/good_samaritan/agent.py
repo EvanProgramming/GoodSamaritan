@@ -65,8 +65,13 @@ Use one tool action at a time. Allowed tools: list_files, read_file, search_text
         model_waits=0
         exploration_steps=0
         exploration_nudges=0
+        edit_actions=0
         paid_limit=self.tools.limits.paid_model_max_agent_steps
         for step in range(step_limit or self.tools.limits.max_agent_steps):
+            reserve=max(0,int(getattr(self.tools.limits,"model_call_reserve",0)))
+            daily_limit=int(getattr(self.tools.limits,"daily_model_calls",0))
+            if reserve and getattr(self.router,"calls",0)>=max(1,daily_limit-reserve):
+                return "stopped: model call reserve kept for validation and review"
             # Explicit targeted runs may fall back to the operator's paid
             # DeepSeek API. Keep that path bounded separately so a large free
             # model run cannot silently spend the paid budget as well.
@@ -116,12 +121,13 @@ Use one tool action at a time. Allowed tools: list_files, read_file, search_text
                 if action.tool=="list_files": out='\n'.join(self.tools.list_files(action.path or '.'))
                 elif action.tool=="read_file": out=self.tools.read_file(action.path or '')[:10000]
                 elif action.tool=="search_text": out='\n'.join(self.tools.search_text(action.query or '',action.path or '.'))
-                elif action.tool=="write_file": self.tools.write_file(action.path or '',action.content or '');out="written";changed=True
+                elif action.tool=="write_file": self.tools.write_file(action.path or '',action.content or '');out="written";changed=True;edit_actions+=1
                 elif action.tool=="apply_patch":
                     if action.content and not action.path and not action.old and not action.new:self.tools.apply_patch_document(action.content)
                     elif action.path and action.old is not None and action.new is not None:self.tools.apply_patch(action.path,action.old,action.new)
                     else:raise ToolSafetyError("apply_patch requires path/old/new or a complete patch in content")
                     out="patched";changed=True
+                    edit_actions+=1
                 elif action.tool=="run_command": out=self.tools.run(action.command or '').output
                 elif action.tool=="read_git_diff": out=self.tools.diff()
                 else:
@@ -137,6 +143,8 @@ Use one tool action at a time. Allowed tools: list_files, read_file, search_text
                     exploration_steps=0;exploration_nudges=0
                 if changed:self.tools.enforce_diff_limits()
                 append_context("\nTool result:\n"+out[:8000])
+                if edit_actions>=max(1,int(getattr(self.tools.limits,"max_edit_actions",4))):
+                    return "patch ready for validation"
             except (ToolSafetyError,OSError) as e:
                 # A rejected action is evidence, not a reason to abandon a
                 # fix: the model can choose a repository-local alternative.

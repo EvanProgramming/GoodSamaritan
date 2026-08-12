@@ -71,6 +71,16 @@ def test_candidate_selection_moves_past_a_large_issue(monkeypatch):
     monkeypatch.setattr('good_samaritan.cli._assessment',assess)
     selected=choose_candidate(object(),[first,second],5,lambda candidate,assessment:rejected.append(candidate.issue.number))
     assert selected[0].issue.number==2 and rejected==[1]
+def test_candidate_selection_rejects_plan_without_target_file(monkeypatch):
+    candidate=score(issue())
+    rejected=[]
+    monkeypatch.setattr('good_samaritan.cli._assessment',lambda _,__: (Assessment(clear=True,small_scope=True,expected_behavior=True,safe=True,confidence=.95,change_plan='Fix it.',test_command='pytest'),object()))
+    assert choose_candidate(object(),[candidate],1,lambda c,a:rejected.append(c.issue.number)) is None and rejected==[7]
+def test_explicit_candidate_can_verify_target_file_after_clone(monkeypatch):
+    candidate=score(issue())
+    assessment=Assessment(clear=True,small_scope=True,expected_behavior=True,safe=True,confidence=.95,change_plan='Fix it.',test_command='pytest')
+    monkeypatch.setattr('good_samaritan.cli._assessment',lambda _,__: (assessment,object()))
+    assert choose_candidate(object(),[candidate],1,minimum_confidence=.75,require_target_files=False)[0].issue.number==7
 def test_database_duplicate_and_transitions(tmp_path):
     db=Database(tmp_path/'x.db'); c=score(issue()); i=db.create(c); db.status(i,Status.TESTING);assert db.seen(c.issue.repository,7);assert db.show(i)['status']==Status.TESTING
     assert db.seen(' ACME/PROJECT ',7)

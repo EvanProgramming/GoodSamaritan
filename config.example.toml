@@ -25,6 +25,10 @@ recoverable_tool_retries = 3
 max_model_wait_retries = 3
 # Force the coding agent to move from inspection to a patch after this many read-only actions.
 max_exploration_steps = 16
+# Stop editing once a bounded patch set exists; validation and repair need model budget too.
+max_edit_actions = 4
+# Keep calls available for validation repair and independent review.
+model_call_reserve = 20
 # Only start a clone when the assessment names a concrete, small patch plan.
 minimum_assessment_confidence = 0.75
 max_modified_files = 12

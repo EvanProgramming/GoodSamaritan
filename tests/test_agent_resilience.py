@@ -1,3 +1,4 @@
+import subprocess
 from good_samaritan.agent import Action, CodingAgent
 from good_samaritan.config import Limits
 from good_samaritan.models import ModelReply
@@ -57,6 +58,18 @@ def test_agent_supports_bounded_forced_patch_pass(tmp_path):
     result=CodingAgent(ForcedPatchRouter(),SafeTools(tmp_path,Limits(max_agent_steps=4))).run("Fix add",force_edit=True,step_limit=3)
     assert result=="{}" and (tmp_path/"calc.py").read_text()=="def add(a, b):\n    return a + b\n"
 
+def test_agent_stops_after_bounded_edit_set_for_validation(tmp_path):
+    subprocess.run(["git","init"],cwd=tmp_path,check=True,capture_output=True)
+    class TwoEdits:
+        def __init__(self):self.calls=0
+        def structured(self,*_):
+            self.calls+=1
+            if self.calls==1:return Action(tool="write_file",path="a.py",content="a=1\n"),ModelReply(provider="test",model="test",content="{}")
+            if self.calls==2:return Action(tool="write_file",path="b.py",content="b=1\n"),ModelReply(provider="test",model="test",content="{}")
+            return Action(tool="read_file",path="README.md"),ModelReply(provider="test",model="test",content="{}")
+    router=TwoEdits();result=CodingAgent(router,SafeTools(tmp_path,Limits(max_agent_steps=20,max_edit_actions=2,model_call_reserve=0))).run("Fix it")
+    assert result=="patch ready for validation" and router.calls==2
+
 class BudgetRouter:
     def __init__(self,provider):
         self.provider=provider; self.last_provider=None; self.calls=0
@@ -67,7 +80,7 @@ class BudgetRouter:
 def test_agent_allows_100_steps_for_free_route(tmp_path):
     for index in range(1,101): (tmp_path/f"file-{index}.txt").write_text("ok")
     router=BudgetRouter("omniroute")
-    result=CodingAgent(router,SafeTools(tmp_path,Limits(max_agent_steps=100))).run("Fix the defect")
+    result=CodingAgent(router,SafeTools(tmp_path,Limits(max_agent_steps=100,model_call_reserve=0))).run("Fix the defect")
     assert router.calls==100 and result=="stopped: agent step limit reached"
 
 def test_agent_caps_paid_deepseek_route_at_40_steps(tmp_path):
