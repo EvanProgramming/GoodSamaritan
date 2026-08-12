@@ -31,13 +31,15 @@ omniroute
 [models]
 priority = ["omniroute", "groq", "gemini"]
 omniroute_model = "auto/coding"
-omniroute_fallback_model = "oc/deepseek-v4-flash-free"
+omniroute_fallback_model = "oc/big-pickle"
 omniroute_base_url = "http://localhost:20128/v1"
 ```
 
-Good Samaritan always tries `auto/coding` first. If an anonymous auto candidate
-returns an empty response, it retries inside OmniRoute with the verified free
-OpenCode model instead of sending an unusable result to the contribution agent.
+Good Samaritan always tries `auto/coding` first. If the selected route returns
+an error or empty response, it retries inside OmniRoute with a separate
+non-DeepSeek coding model instead of sending an unusable result to the
+contribution agent. Cloud-provider pacing waits are bounded; a provider whose
+next call would exceed that budget is skipped so the next provider can run.
 
 OmniRoute's local free route can be used without an API key. If its dashboard supplies an endpoint key, store it as `OMNIROUTE_API_KEY` in `.env`; a non-loopback `OMNIROUTE_BASE_URL` always requires that key.
 

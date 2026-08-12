@@ -23,6 +23,10 @@ paid_model_max_agent_steps = 40
 recoverable_tool_retries = 3
 # Do not wait forever inside one attempt when every model provider is unavailable.
 max_model_wait_retries = 3
+# Force the coding agent to move from inspection to a patch after this many read-only actions.
+max_exploration_steps = 16
+# Only start a clone when the assessment names a concrete, small patch plan.
+minimum_assessment_confidence = 0.75
 max_modified_files = 12
 max_diff_lines = 1000
 command_timeout_seconds = 600
@@ -36,6 +40,9 @@ provider_retry_rounds = 2
 provider_retry_delay_seconds = 5
 # Wait at least this long between calls to the same provider API.
 provider_min_interval_seconds = 65
+# Never spend an entire contribution attempt sleeping for a cloud provider;
+# skip it and continue to the next configured provider when this is exceeded.
+max_provider_wait_seconds = 65
 
 [runtime]
 dry_run = true
@@ -69,7 +76,7 @@ deepseek_model = ""
 # run `omniroute`, then set priority to include "omniroute" and use OmniRoute's coding router `auto/coding`.
 # OMNIROUTE_API_KEY is optional only when this URL remains a loopback address.
 omniroute_model = "auto/coding"
-# If auto/coding selects an anonymous backend that returns no usable text,
-# retry through the verified free OpenCode model in the same OmniRoute gateway.
-omniroute_fallback_model = "oc/deepseek-v4-flash-free"
+# If auto/coding or another OmniRoute model fails, retry through this
+# non-DeepSeek coding model in the same gateway.
+omniroute_fallback_model = "oc/big-pickle"
 omniroute_base_url = "http://localhost:20128/v1"

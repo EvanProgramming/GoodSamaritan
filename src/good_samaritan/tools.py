@@ -5,6 +5,7 @@ from .config import Limits
 from .models import CommandResult
 class ToolSafetyError(ValueError): pass
 class SafeTools:
+    _blocked_parts={".git",".good-samaritan-home",".good-samaritan-venv"}
     def __init__(self,root:Path,limits:Limits):
         self.root=root.resolve();self.limits=limits;self.commands: list[CommandResult]=[]
         # Validation runs create an isolated HOME and, optionally, a virtual
@@ -19,9 +20,13 @@ class SafeTools:
     def path(self,path:str)->Path:
         p=(self.root/path).resolve()
         if p!=self.root and self.root not in p.parents:raise ToolSafetyError("path escapes repository")
+        if p!=self.root and any(part in self._blocked_parts for part in p.relative_to(self.root).parts):raise ToolSafetyError("internal runtime path is blocked")
         if any(x in p.name.lower() for x in (".env","id_rsa","credentials")):raise ToolSafetyError("sensitive file access blocked")
         return p
-    def list_files(self,path:str=".")->list[str]:return [str(p.relative_to(self.root)) for p in self.path(path).rglob("*") if p.is_file()][:500]
+    def _files(self,path:str="."):
+        base=self.path(path)
+        return [p for p in base.rglob("*") if p.is_file() and not any(part in self._blocked_parts for part in p.relative_to(self.root).parts)]
+    def list_files(self,path:str=".")->list[str]:return [str(p.relative_to(self.root)) for p in self._files(path)][:500]
     def read_file(self,path:str)->str:
         target=self.path(path)
         if not target.is_file():raise ToolSafetyError("file does not exist or is not a regular file")
@@ -40,8 +45,51 @@ class SafeTools:
         content=target.read_text()
         if old not in content:raise ToolSafetyError("patch context was not found")
         target.write_text(content.replace(old,new,1))
+    def apply_patch_document(self,document:str):
+        """Apply the common ``*** Begin Patch`` format emitted by coding models."""
+        text=document.strip()
+        if text.startswith("```"):
+            text=text.removeprefix("```").removesuffix("```").strip()
+        if text.startswith("*** Begin Patch"):
+            text=text[len("*** Begin Patch"):].lstrip("\r\n")
+        if text.endswith("*** End Patch"):
+            text=text[:-len("*** End Patch")].strip("\r\n")+"\n"
+        lines=text.splitlines(keepends=True)
+        current:dict|None=None; hunk:list[str]=[]; records:list[tuple[str,str,list[str]]]=[]
+        def flush_hunk():
+            nonlocal hunk
+            if current is not None and hunk:current["hunks"].append(hunk)
+            hunk=[]
+        def flush_file():
+            nonlocal current
+            flush_hunk()
+            if current is not None:records.append((current["kind"],current["path"],current["hunks"]))
+            current=None
+        for line in lines:
+            header=re.match(r"^\*\*\* (Update|Add|Delete) File: (.+?)\s*$",line.rstrip("\r\n"))
+            if header:
+                flush_file();current={"kind":header.group(1),"path":header.group(2),"hunks":[]};continue
+            if line.startswith("@@"):
+                flush_hunk();continue
+            if line.startswith("\\ No newline"):
+                continue
+            if current is None:raise ToolSafetyError("patch document is missing a file header")
+            if line[0] not in " +-":raise ToolSafetyError("unsupported patch document line")
+            hunk.append(line)
+        flush_file()
+        if not records:raise ToolSafetyError("patch document contained no file changes")
+        for kind,path,hunks in records:
+            if kind=="Delete":raise ToolSafetyError("file deletion is not supported by the bounded patch tool")
+            if kind=="Add":
+                content="".join(line[1:] for h in hunks for line in h if line.startswith("+"))
+                self.write_file(path,content);continue
+            for h in hunks:
+                old="".join(line[1:] for line in h if line.startswith((" ","-")))
+                new="".join(line[1:] for line in h if line.startswith((" ","+")))
+                if not old:raise ToolSafetyError("update patch has no context")
+                self.apply_patch(path,old,new)
     def search_text(self,query:str,path:str=".")->list[str]:
-        return [f"{p.relative_to(self.root)}:{i}:{line[:300]}" for p in self.path(path).rglob("*") if p.is_file() for i,line in enumerate(p.read_text(errors="ignore").splitlines(),1) if query.lower() in line.lower()][:200]
+        return [f"{p.relative_to(self.root)}:{i}:{line[:300]}" for p in self._files(path) for i,line in enumerate(p.read_text(errors="ignore").splitlines(),1) if query.lower() in line.lower()][:200]
     def diff(self)->str:return self.run("git diff --no-ext-diff").output
     def run(self,command:str)->CommandResult:
         lowered=command.lower()

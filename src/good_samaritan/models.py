@@ -14,6 +14,9 @@ class Issue(BaseModel):
 class Assessment(BaseModel):
     clear: bool; small_scope: bool; expected_behavior: bool; safe: bool; confidence: float = Field(ge=0, le=1)
     reasoning: str = ""
+    target_files: list[str] = Field(default_factory=list)
+    change_plan: str = ""
+    test_command: str = ""
 
 class Candidate(BaseModel):
     issue: Issue; score: float; reasons: list[str]; assessment: Assessment | None = None

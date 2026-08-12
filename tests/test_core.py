@@ -67,7 +67,7 @@ def test_candidate_selection_moves_past_a_large_issue(monkeypatch):
     rejected=[]
     def assess(_,candidate):
         small=candidate.issue.number==2
-        return Assessment(clear=True,small_scope=small,expected_behavior=True,safe=True,confidence=.9,reasoning='large' if not small else ''),object()
+        return Assessment(clear=True,small_scope=small,expected_behavior=True,safe=True,confidence=.9,reasoning='large' if not small else '',target_files=['calc.py'],change_plan='Fix the arithmetic operator.',test_command='python -m pytest'),object()
     monkeypatch.setattr('good_samaritan.cli._assessment',assess)
     selected=choose_candidate(object(),[first,second],5,lambda candidate,assessment:rejected.append(candidate.issue.number))
     assert selected[0].issue.number==2 and rejected==[1]
@@ -105,6 +105,18 @@ def test_safe_tools_blocks_escape_and_commands(tmp_path):
     with pytest.raises(ToolSafetyError):t.run('sudo whoami')
     with pytest.raises(ToolSafetyError):t.run('cd / && git status')
     assert t.run('git status').exit_code==0
+def test_safe_tools_applies_model_unified_patch_document(tmp_path):
+    subprocess.run(['git','init'],cwd=tmp_path,check=True,capture_output=True)
+    (tmp_path/'calc.py').write_text('def add(a, b):\n    return a - b\n')
+    tools=SafeTools(tmp_path,load_settings().limits)
+    tools.apply_patch_document('''*** Begin Patch
+*** Update File: calc.py
+@@
+ def add(a, b):
+-    return a - b
++    return a + b
+*** End Patch''')
+    assert (tmp_path/'calc.py').read_text()=='def add(a, b):\n    return a + b\n'
 def test_safe_tools_rejects_directory_patch(tmp_path):
     subprocess.run(['git','init'],cwd=tmp_path,check=True,capture_output=True)
     tools=SafeTools(tmp_path,load_settings().limits)
@@ -177,7 +189,7 @@ def test_github_fetches_one_issue_without_enumerating_repository():
     result=GitHub(load_settings(),client).issue('acme/project',7)
     assert result.number==7 and '/repos/acme/project/issues' not in seen
 def test_router_fallback_and_structured(monkeypatch,tmp_path):
-    s=load_settings();s.models.priority=['groq','gemini'];s.models.groq_model='bad';s.models.gemini_model='good';monkeypatch.setenv('GROQ_API_KEY','x');monkeypatch.setenv('GEMINI_API_KEY','x')
+    s=load_settings();s.models.priority=['groq','gemini'];s.models.groq_model='bad';s.models.gemini_model='good';s.limits.provider_min_interval_seconds=0;monkeypatch.setenv('GROQ_API_KEY','x');monkeypatch.setenv('GEMINI_API_KEY','x')
     s.runtime.database_path=tmp_path/'state.db'
     router=ModelRouter(s)
     def call(p,prompt,json_mode=False):
@@ -226,7 +238,7 @@ def test_router_no_key(monkeypatch):
     s=load_settings();s.models.priority=['groq'];s.models.groq_model='x'
     with pytest.raises(ModelUnavailable):ModelRouter(s).complete('x')
 def test_router_error_redacts_key(monkeypatch,tmp_path):
-    s=load_settings();s.models.priority=['gemini'];s.models.gemini_model='x';monkeypatch.setenv('GEMINI_API_KEY','a-secret-key')
+    s=load_settings();s.models.priority=['gemini'];s.models.gemini_model='x';s.limits.provider_min_interval_seconds=0;monkeypatch.setenv('GEMINI_API_KEY','a-secret-key')
     s.runtime.database_path=tmp_path/'state.db'
     router=ModelRouter(s)
     def fail(*_):
@@ -313,6 +325,13 @@ def test_router_waits_before_reusing_the_same_provider(monkeypatch,tmp_path):
     router._pace('groq')
 
     assert waited==[('groq',65),('sleep',65)]
+
+def test_router_skips_provider_when_pacing_wait_exceeds_budget(monkeypatch,tmp_path):
+    s=load_settings();s.runtime.database_path=tmp_path/'state.db';s.limits.provider_min_interval_seconds=65;s.limits.max_provider_wait_seconds=10
+    waited=[];router=ModelRouter(s,on_wait=lambda provider,seconds:waited.append((provider,seconds)))
+    now=[1_000.0]
+    monkeypatch.setattr('good_samaritan.router.time.time',lambda:now[0])
+    assert router._pace('groq') is True and router._pace('groq') is False and waited==[]
 
 def test_paid_targeted_deepseek_skips_the_free_provider_rate_limiter(monkeypatch,tmp_path):
     s=load_settings();s.runtime.database_path=tmp_path/'state.db';s.limits.provider_min_interval_seconds=65

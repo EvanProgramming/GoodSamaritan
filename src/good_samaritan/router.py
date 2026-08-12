@@ -28,13 +28,13 @@ class ModelRouter:
         if isinstance(error,(httpx.TimeoutException,httpx.TransportError)):
             return True
         return isinstance(error,(ValueError,KeyError,IndexError,TypeError))
-    def _pace(self,p:str):
+    def _pace(self,p:str)->bool:
         """Reserve a provider call across daemon and targeted-run processes."""
         # DeepSeek is intentionally injected only for explicit --repository
         # runs. Its supplied paid plan has no request-rate restriction.
-        if p in {"deepseek","omniroute"}:return
+        if p in {"deepseek","omniroute"}:return True
         interval=self.settings.limits.provider_min_interval_seconds
-        if interval<=0:return
+        if interval<=0:return True
         self.rate_state.parent.mkdir(parents=True,exist_ok=True)
         with self.rate_state.open("a+") as state:
             fcntl.flock(state.fileno(),fcntl.LOCK_EX)
@@ -44,11 +44,13 @@ class ModelRouter:
                 except (json.JSONDecodeError,ValueError):history={}
                 remaining=float(history.get(p,0))+interval-time.time()
                 if remaining>0:
+                    if remaining>self.settings.limits.max_provider_wait_seconds:return False
                     if self.on_wait:self.on_wait(p,ceil(remaining))
                     time.sleep(remaining)
                 history[p]=time.time()
                 state.seek(0);state.truncate();json.dump(history,state);state.flush()
             finally:fcntl.flock(state.fileno(),fcntl.LOCK_UN)
+        return True
     @staticmethod
     def _omniroute_content(response:httpx.Response)->str:
         """Read OmniRoute's OpenAI JSON replies or its SSE-compatible replies."""
@@ -81,7 +83,9 @@ class ModelRouter:
                 # pacing lock still protects minute-level provider quotas.
                 if round_no==0 and self.cooldowns.get(p,0)>time.monotonic():continue
                 try:
-                    self._pace(p)
+                    if not self._pace(p):
+                        errors.append(f"{p}: provider pacing wait exceeds configured budget")
+                        continue
                     reply=self._call(p,prompt,json_mode); self.calls+=1; self.last_provider=reply.provider; return reply
                 except (httpx.HTTPError,ValueError,KeyError,IndexError,TypeError) as e:
                     # httpx exceptions include request URLs; Gemini puts its key in
@@ -111,21 +115,24 @@ class ModelRouter:
             base="https://api.groq.com/openai/v1" if p=="groq" else "https://api.deepseek.com" if p=="deepseek" else self.settings.models.omniroute_base_url.rstrip("/") if p=="omniroute" else "https://openrouter.ai/api/v1"
             headers={"Authorization":f"Bearer {self._key(p)}"} if self._key(p) else {}
             r=self.client.post(base+"/chat/completions",headers=headers,json=payload)
+            used_model=model
             if p=="omniroute":
                 try:
                     r.raise_for_status(); content=self._omniroute_content(r)
-                except httpx.HTTPError:
+                except (httpx.HTTPError,ValueError,KeyError,IndexError,TypeError):
                     fallback=getattr(self.settings.models,"omniroute_fallback_model","")
-                    if model!="auto/coding" or not fallback or fallback==model:raise
+                    if not fallback or fallback==model:raise
                     payload["model"]=fallback; r=self.client.post(base+"/chat/completions",headers=headers,json=payload); r.raise_for_status(); content=self._omniroute_content(r)
+                    used_model=fallback
                 else:
                     fallback=getattr(self.settings.models,"omniroute_fallback_model","")
-                    if model=="auto/coding" and fallback and not content.strip():
+                    if fallback and fallback!=model and not content.strip():
                         payload["model"]=fallback; r=self.client.post(base+"/chat/completions",headers=headers,json=payload); r.raise_for_status(); content=self._omniroute_content(r)
+                        used_model=fallback
             else:
                 r.raise_for_status(); message=r.json()["choices"][0]["message"]; content=message.get("content") or message.get("reasoning_content") or message.get("reasoning")
             if not isinstance(content,str) or not content.strip():raise ValueError("model response contained no usable text")
-        return ModelReply(provider=p,model=model,content=content,estimated_tokens=max(1,len(prompt+content)//4))
+        return ModelReply(provider=p,model=used_model if p=="omniroute" else model,content=content,estimated_tokens=max(1,len(prompt+content)//4))
     @staticmethod
     def _json_objects(raw:str)->list[str]:
         """Extract every complete JSON object from chatty model output.

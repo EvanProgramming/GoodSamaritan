@@ -35,6 +35,28 @@ def test_agent_stops_repeated_identical_actions_before_step_budget(tmp_path):
     result=CodingAgent(RepeatingRouter(),SafeTools(tmp_path,Limits(max_agent_steps=20))).run("Fix the defect")
     assert result=="stopped: repeated identical tool action"
 
+class ForcedPatchRouter:
+    def __init__(self):
+        self.actions=iter([
+            Action(tool="read_file",path="calc.py"),
+            Action(tool="apply_patch",content="""*** Begin Patch
+*** Update File: calc.py
+@@
+ def add(a, b):
+-    return a - b
++    return a + b
+*** End Patch"""),
+            Action(tool="finish"),
+        ])
+
+    def structured(self, *_):
+        return next(self.actions), ModelReply(provider="test",model="test",content="{}")
+
+def test_agent_supports_bounded_forced_patch_pass(tmp_path):
+    (tmp_path/"calc.py").write_text("def add(a, b):\n    return a - b\n")
+    result=CodingAgent(ForcedPatchRouter(),SafeTools(tmp_path,Limits(max_agent_steps=4))).run("Fix add",force_edit=True,step_limit=3)
+    assert result=="{}" and (tmp_path/"calc.py").read_text()=="def add(a, b):\n    return a + b\n"
+
 class BudgetRouter:
     def __init__(self,provider):
         self.provider=provider; self.last_provider=None; self.calls=0
@@ -76,8 +98,8 @@ def test_agent_waits_and_resumes_when_model_api_is_temporarily_unavailable(tmp_p
             if self.calls==2:return Action(tool="write_file",path="fix.txt",content="fixed\n"),ModelReply(provider="omniroute",model="auto/coding",content="{}")
             return Action(tool="finish"),ModelReply(provider="omniroute",model="auto/coding",content="done")
     waits=[];resumes=[];monkeypatch.setattr("good_samaritan.agent.time.sleep",lambda _:None)
-    router=TemporarilyUnavailable();result=CodingAgent(router,SafeTools(tmp_path,Limits(max_agent_steps=5))).run("Fix it",model_retry_interval=1,on_model_wait=lambda error,seconds:waits.append((error,seconds)),on_model_resume=lambda:resumes.append(True))
-    assert result=="done" and router.calls==3 and waits and resumes and (tmp_path/"fix.txt").read_text()=="fixed\n"
+    router=TemporarilyUnavailable();result=CodingAgent(router,SafeTools(tmp_path,Limits(max_agent_steps=5))).run("Fix it",model_retry_interval=900,model_wait_cap=7,on_model_wait=lambda error,seconds:waits.append((error,seconds)),on_model_resume=lambda:resumes.append(True))
+    assert result=="done" and router.calls==3 and waits[0][1]==7 and resumes and (tmp_path/"fix.txt").read_text()=="fixed\n"
 
 
 def test_agent_bounds_provider_unavailability_waits(tmp_path,monkeypatch):
@@ -105,4 +127,4 @@ def test_agent_bounds_rolling_tool_context(tmp_path):
             if self.calls==11:return Action(tool="write_file",path="fix.txt",content="fixed\n"),ModelReply(provider="omniroute",model="test",content="{}")
             return Action(tool="finish"),ModelReply(provider="omniroute",model="test",content="done")
     router=LargeOutputRouter();result=CodingAgent(router,SafeTools(tmp_path,Limits(max_agent_steps=20))).run("Fix it")
-    assert result=="done" and max(router.prompt_lengths)<=48000
+    assert result=="done" and max(router.prompt_lengths)<=24000
