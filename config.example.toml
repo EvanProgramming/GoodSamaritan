@@ -79,8 +79,8 @@ deepseek_model = ""
 # Optional local OpenAI-compatible gateway. Install with `npm install -g omniroute`,
 # run `omniroute`, then set priority to include "omniroute" and use a verified OmniRoute coding model.
 # OMNIROUTE_API_KEY is optional only when this URL remains a loopback address.
-omniroute_model = "oc/big-pickle"
+omniroute_model = "oc/mimo-v2.5-free"
 # If the primary model fails, retry through this other non-DeepSeek coding
 # model in the same gateway.
-omniroute_fallback_model = "oc/nemotron-3-ultra-free"
+omniroute_fallback_model = "oc/big-pickle"
 omniroute_base_url = "http://localhost:20128/v1"

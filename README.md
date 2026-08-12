@@ -30,8 +30,8 @@ omniroute
 ```toml
 [models]
 priority = ["omniroute", "groq", "gemini"]
-omniroute_model = "oc/big-pickle"
-omniroute_fallback_model = "oc/nemotron-3-ultra-free"
+omniroute_model = "oc/mimo-v2.5-free"
+omniroute_fallback_model = "oc/big-pickle"
 omniroute_base_url = "http://localhost:20128/v1"
 ```
 
