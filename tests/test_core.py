@@ -29,10 +29,10 @@ def test_config_loads_private_env_beside_config(monkeypatch,tmp_path):
     (tmp_path/'.env').write_text('DEEPSEEK_API_KEY=test-key\n')
     assert load_settings(p).models.deepseek_model=='deepseek-chat'
     assert __import__('os').environ['DEEPSEEK_API_KEY']=='test-key'
-def test_deepseek_is_enabled_only_for_targeted_runs(monkeypatch):
+def test_deepseek_is_never_implicitly_enabled(monkeypatch):
     s=load_settings();s.models.priority=['groq','gemini'];s.models.deepseek_model='deepseek-chat';monkeypatch.setenv('DEEPSEEK_API_KEY','test-key')
     enable_targeted_paid_model(s,None);assert s.models.priority==['groq','gemini']
-    enable_targeted_paid_model(s,'owner/repository');assert s.models.priority==['deepseek','groq','gemini']
+    enable_targeted_paid_model(s,'owner/repository');assert s.models.priority==['groq','gemini']
 def test_setup_writers_keep_secrets_private(tmp_path):
     env=tmp_path/'.env';config=tmp_path/'config.toml';_write_private_env(env,{'GROQ_API_KEY':'secret'});_write_toml(config,['groq'],{'groq':'example-model'})
     assert (env.stat().st_mode & 0o777)==0o600 and 'secret' in env.read_text()

@@ -28,9 +28,11 @@ from .runtime_state import consume_manual_run, write as write_runtime_state
 app=typer.Typer(help="A cautious experimental AI open-source contributor.",no_args_is_help=True); console=Console(); stopping=False
 def settings(config:Path|None):return load_settings(config)
 def enable_targeted_paid_model(s,repository:str|None):
-    """DeepSeek is opt-in only for an explicitly targeted repository run."""
-    if repository and os.getenv("DEEPSEEK_API_KEY") and s.models.deepseek_model:
-        s.models.priority=["deepseek",*[p for p in s.models.priority if p!="deepseek"]]
+    """Keep the configured non-DeepSeek failover order for every run."""
+    # A stale DEEPSEEK_API_KEY must never silently change routing. DeepSeek is
+    # intentionally excluded from autonomous and targeted contribution runs;
+    # OmniRoute and the configured cloud providers are the recovery paths.
+    s.models.priority=[p for p in s.models.priority if p!="deepseek"]
 def log(msg:str,as_json:bool=False,**data): console.print(json.dumps({"message":msg,**data}) if as_json else msg)
 def push_branch(root:Path,branch:str,token:str):
     """Push without persisting or exposing the GitHub token in the remote URL."""
