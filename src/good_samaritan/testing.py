@@ -7,12 +7,16 @@ def _python(root:Path)->str:
     return shlex.quote(str(isolated if isolated.exists() else Path(sys.executable)))
 def detect_commands(root:Path)->list[str]:
     python=f"{_python(root)} -m pytest"
+    # Language-specific manifests take precedence over a generic `tests/`
+    # directory.  zlint, for example, is a Zig/Node project with test files;
+    # running Python pytest there was a false validation failure.
+    if (root/"package.json").exists():return ["npm test", "npm run lint"]
+    if (root/"build.zig").exists():return ["zig build test"]
     # pytest is the common runner for both declared pytest projects and the
     # ordinary ``test_*.py`` layout.  Do not also invoke unittest discovery:
     # its different collection rules can turn a passing pytest suite into a
     # false failure (or hide a failed pytest run).
     if (root/"pyproject.toml").exists() or (root/"pytest.ini").exists() or any(root.glob("test_*.py")) or (root/"tests").exists():return [python]
-    if (root/"package.json").exists():return ["npm test", "npm run lint"]
     if (root/"Cargo.toml").exists():return ["cargo test"]
     if (root/"go.mod").exists():return ["go test ./..."]
     if (root/"Makefile").exists():return ["make test"]
@@ -51,10 +55,11 @@ def run_validation(tools:SafeTools,allow_dependency_install:bool=False)->tuple[b
     # repair/model calls asking the agent to fix an environment failure. Keep
     # real test failures strict; this fallback applies only when npm itself is
     # unavailable and still requires a clean diff.
-    if commands and any(command.startswith("npm ") for command in commands) and any(
+    missing_runtime=any(
         result.exit_code==127 and "not found" in getattr(result,"output","").lower()
         for result in observed
-    ):
+    )
+    if commands and missing_runtime and all(command.startswith(("npm ","zig ")) for command in commands):
         results=[result.exit_code==0 for command,result in zip(commands,observed)
                  if not (command.startswith("npm ") and result.exit_code==127)]
         commands.append("git diff --check")
