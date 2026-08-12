@@ -50,6 +50,17 @@ class SafeTools:
         text=document.strip()
         if text.startswith("```"):
             text=text.removeprefix("```").removesuffix("```").strip()
+        if text.startswith("--- ") and "+++ " in text:
+            # Accept standard git unified diffs returned by coding models.
+            normalized=["*** Begin Patch\n"]
+            for line in text.splitlines(keepends=True):
+                if line.startswith("--- "):continue
+                if line.startswith("+++ "):
+                    path=line[4:].strip().removeprefix("b/")
+                    normalized.append(f"*** Update File: {path}\n")
+                else:normalized.append(line)
+            normalized.append("*** End Patch\n");text="".join(normalized)
+        text=text.rstrip()
         if text.startswith("*** Begin Patch"):
             text=text[len("*** Begin Patch"):].lstrip("\r\n")
         if text.endswith("*** End Patch"):

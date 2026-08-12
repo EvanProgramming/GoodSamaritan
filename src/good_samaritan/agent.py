@@ -132,7 +132,7 @@ Use one tool action at a time. Allowed tools: list_files, read_file, search_text
                 elif action.tool=="search_text": out='\n'.join(self.tools.search_text(action.query or '',action.path or '.'))
                 elif action.tool=="write_file": self.tools.write_file(action.path or '',action.content or '');out="written";changed=True;edit_actions+=1
                 elif action.tool=="apply_patch":
-                    if action.content and ("*** Begin Patch" in action.content or "*** Update File:" in action.content):self.tools.apply_patch_document(action.content)
+                    if action.content and ("*** Begin Patch" in action.content or "*** Update File:" in action.content or ("--- " in action.content and "+++ " in action.content)):self.tools.apply_patch_document(action.content)
                     elif action.path and action.old is not None and action.new is not None:self.tools.apply_patch(action.path,action.old,action.new)
                     else:raise ToolSafetyError("apply_patch requires path/old/new or a complete patch in content")
                     out="patched";changed=True
