@@ -67,6 +67,7 @@ Use one tool action at a time. Allowed tools: list_files, read_file, search_text
         exploration_nudges=0
         inspection_locked=False
         lock_violations=0
+        patch_recovery_reads=0
         edit_actions=0
         paid_limit=self.tools.limits.paid_model_max_agent_steps
         for step in range(step_limit or self.tools.limits.max_agent_steps):
@@ -112,11 +113,16 @@ Use one tool action at a time. Allowed tools: list_files, read_file, search_text
                     continue
                 return reply.content
             try:
-                if inspection_locked and action.tool not in {"write_file","apply_patch"}:
+                allow_patch_recovery_read = inspection_locked and recoverable_errors and patch_recovery_reads < 1 and action.tool in {"read_file","search_text"}
+                if inspection_locked and action.tool not in {"write_file","apply_patch"} and not allow_patch_recovery_read:
                     lock_violations+=1
                     append_context(f"\nInspection budget enforcement rejected {action.tool}. Do not inspect further; use apply_patch or write_file now ({lock_violations}/2).")
                     if lock_violations>=2:return "stopped: agent refused to edit after inspection budget"
                     continue
+                if allow_patch_recovery_read:
+                    patch_recovery_reads+=1
+                    inspection_locked=False
+                    lock_violations=0
                 action_key=json.dumps(action.model_dump(),sort_keys=True)
                 repeated_actions=repeated_actions+1 if action_key==last_action else 1
                 last_action=action_key
@@ -162,7 +168,8 @@ Use one tool action at a time. Allowed tools: list_files, read_file, search_text
                 recoverable_errors+=1
                 if recoverable_errors>self.tools.limits.recoverable_tool_retries:
                     return f"stopped: tool error persisted after {self.tools.limits.recoverable_tool_retries} retries"
-                append_context(f"\nRecoverable tool error ({recoverable_errors}/{self.tools.limits.recoverable_tool_retries}): {str(e)[:1200]}. Correct the path or arguments and choose a different action; do not repeat the failed action.")
+                hint = " Read the target file once and use its exact current text before retrying the patch." if action.tool == "apply_patch" else ""
+                append_context(f"\nRecoverable tool error ({recoverable_errors}/{self.tools.limits.recoverable_tool_retries}): {str(e)[:1200]}.{hint} Correct the path or arguments and choose a different action; do not repeat the failed action.")
             else:
                 recoverable_errors=0
         return "stopped: agent step limit reached"
