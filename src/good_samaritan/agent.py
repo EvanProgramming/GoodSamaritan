@@ -50,7 +50,10 @@ Use one tool action at a time. Allowed tools: list_files, read_file, search_text
         base_context=context[:18000]
         # Keep provider requests below the size where the local gateway stopped
         # responding after a long inspection transcript.
-        max_context_chars=24000
+        # A targeted source read can be 10k chars; keep the complete latest
+        # read in the rolling prompt so the model does not see only the end of
+        # the file and then invent stale patch context.
+        max_context_chars=32000 if force_edit else 24000
         def append_context(addition:str):
             nonlocal context
             context += addition
