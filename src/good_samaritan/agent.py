@@ -67,6 +67,10 @@ Use one tool action at a time. Allowed tools: list_files, read_file, search_text
         exploration_nudges=0
         inspection_locked=False
         lock_violations=0
+        # A free coding model may propose stale path/old/new context. Allow a
+        # few targeted rereads after that specific failure so it can recover
+        # from the checkout's actual source instead of being forced into a
+        # false no-diff skip.
         patch_recovery_reads=0
         edit_actions=0
         paid_limit=self.tools.limits.paid_model_max_agent_steps
@@ -113,7 +117,7 @@ Use one tool action at a time. Allowed tools: list_files, read_file, search_text
                     continue
                 return reply.content
             try:
-                allow_patch_recovery_read = inspection_locked and recoverable_errors and patch_recovery_reads < 1 and action.tool in {"read_file","search_text"}
+                allow_patch_recovery_read = inspection_locked and recoverable_errors and patch_recovery_reads < 3 and action.tool in {"read_file","search_text"}
                 if inspection_locked and action.tool not in {"write_file","apply_patch"} and not allow_patch_recovery_read:
                     lock_violations+=1
                     append_context(f"\nInspection budget enforcement rejected {action.tool}. Do not inspect further; use apply_patch or write_file now ({lock_violations}/2).")
