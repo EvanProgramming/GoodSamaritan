@@ -137,8 +137,16 @@ def choose_candidate(router:ModelRouter,candidates:list[Candidate],maximum:int,o
     """Try several ranked issues so one large feature does not block a repo."""
     for candidate in sorted(candidates,key=lambda item:item.score,reverse=True)[:maximum]:
         assessment,reply=_assessment(router,candidate); assessed=score(candidate.issue,assessment)
-        plan_ready=((not require_target_files or 0<len(assessment.target_files)<=3) and len(assessment.target_files)<=3 and bool(assessment.change_plan.strip()) and bool(assessment.test_command.strip()))
-        if assessment.clear and assessment.small_scope and assessment.expected_behavior and assessment.safe and assessment.confidence>=minimum_confidence and plan_ready:return assessed,reply
+        if require_target_files:
+            plan_ready=(0<len(assessment.target_files)<=3 and bool(assessment.change_plan.strip()) and bool(assessment.test_command.strip()))
+            eligible=assessment.clear and plan_ready
+        else:
+            # An explicit operator-targeted issue may omit source paths and a
+            # complete plan. Resolve those only after cloning; retain the
+            # safety, scope, behavior, and confidence gates.
+            plan_ready=len(assessment.target_files)<=3
+            eligible=plan_ready
+        if eligible and assessment.small_scope and assessment.expected_behavior and assessment.safe and assessment.confidence>=minimum_confidence:return assessed,reply
         if on_reject:on_reject(assessed,assessment)
     return None
 @app.command()

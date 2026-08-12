@@ -78,7 +78,7 @@ def test_candidate_selection_rejects_plan_without_target_file(monkeypatch):
     assert choose_candidate(object(),[candidate],1,lambda c,a:rejected.append(c.issue.number)) is None and rejected==[7]
 def test_explicit_candidate_can_verify_target_file_after_clone(monkeypatch):
     candidate=score(issue())
-    assessment=Assessment(clear=True,small_scope=True,expected_behavior=True,safe=True,confidence=.95,change_plan='Fix it.',test_command='pytest')
+    assessment=Assessment(clear=False,small_scope=True,expected_behavior=True,safe=True,confidence=.95,reasoning='Source path is not named; verify after cloning.')
     monkeypatch.setattr('good_samaritan.cli._assessment',lambda _,__: (assessment,object()))
     assert choose_candidate(object(),[candidate],1,minimum_confidence=.75,require_target_files=False)[0].issue.number==7
 def test_database_duplicate_and_transitions(tmp_path):
