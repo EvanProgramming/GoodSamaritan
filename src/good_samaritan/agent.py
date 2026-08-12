@@ -53,7 +53,7 @@ Use one tool action at a time. Allowed tools: list_files, read_file, search_text
         # A targeted source read can be 10k chars; keep the complete latest
         # read in the rolling prompt so the model does not see only the end of
         # the file and then invent stale patch context.
-        max_context_chars=32000 if force_edit else 24000
+        max_context_chars=48000 if force_edit else 24000
         def append_context(addition:str):
             nonlocal context
             context += addition
@@ -141,7 +141,7 @@ Use one tool action at a time. Allowed tools: list_files, read_file, search_text
                     return "stopped: repeated identical tool action"
                 if progress:progress(action.tool,action.path or action.command or action.query or "",len((action.content or action.new or "").splitlines()))
                 if action.tool=="list_files": out='\n'.join(self.tools.list_files(action.path or '.'))
-                elif action.tool=="read_file": out=self.tools.read_file(action.path or '')[:10000]
+                elif action.tool=="read_file": out=self.tools.read_file(action.path or '')[:24000 if force_edit else 10000]
                 elif action.tool=="search_text": out='\n'.join(self.tools.search_text(action.query or '',action.path or '.'))
                 elif action.tool=="write_file": self.tools.write_file(action.path or '',action.content or '');out="written";changed=True;edit_actions+=1
                 elif action.tool=="apply_patch":
@@ -166,7 +166,7 @@ Use one tool action at a time. Allowed tools: list_files, read_file, search_text
                 elif self.tools.changed_files():
                     exploration_steps=0;exploration_nudges=0;inspection_locked=False;lock_violations=0
                 if changed:self.tools.enforce_diff_limits()
-                append_context("\nTool result:\n"+out[:8000])
+                append_context("\nTool result:\n"+out[:24000 if force_edit else 8000])
                 if edit_actions>=max(1,int(getattr(self.tools.limits,"max_edit_actions",4))):
                     return "patch ready for validation"
             except (ToolSafetyError,OSError) as e:
