@@ -68,6 +68,25 @@ def test_agent_supports_bounded_forced_patch_pass(tmp_path):
     result=CodingAgent(ForcedPatchRouter(),SafeTools(tmp_path,Limits(max_agent_steps=4))).run("Fix add",force_edit=True,step_limit=3)
     assert result=="{}" and (tmp_path/"calc.py").read_text()=="def add(a, b):\n    return a + b\n"
 
+def test_agent_applies_unified_patch_when_model_also_sets_path(tmp_path):
+    subprocess.run(["git","init"],cwd=tmp_path,check=True,capture_output=True)
+    (tmp_path/"calc.py").write_text("def add(a, b):\n    return a - b\n")
+    subprocess.run(["git","add","-N","calc.py"],cwd=tmp_path,check=True,capture_output=True)
+    class Router:
+        def __init__(self):self.calls=0
+        def structured(self,*_):
+            self.calls+=1
+            if self.calls==1:return Action(tool="apply_patch",path="calc.py",content="""*** Begin Patch
+*** Update File: calc.py
+@@
+ def add(a, b):
+-    return a - b
++    return a + b
+*** End Patch"""),ModelReply(provider="test",model="test",content="{}")
+            return Action(tool="finish"),ModelReply(provider="test",model="test",content="{}")
+    result=CodingAgent(Router(),SafeTools(tmp_path,Limits(max_agent_steps=3,model_call_reserve=0))).run("Fix it")
+    assert result=="{}" and (tmp_path/"calc.py").read_text()=="def add(a, b):\n    return a + b\n"
+
 def test_agent_stops_after_bounded_edit_set_for_validation(tmp_path):
     subprocess.run(["git","init"],cwd=tmp_path,check=True,capture_output=True)
     class TwoEdits:
